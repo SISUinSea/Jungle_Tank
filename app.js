@@ -3,7 +3,10 @@ const ctx = canvas.getContext("2d");
 
 const WORLD = { width: 1600, height: 900 };
 const FIXED_STEP = 1 / 60;
-const TARGET_SCORE = 3;
+const MIN_SCORE_TO_WIN = 3;
+const MIN_TEAM_SIZE = 1;
+const MAX_TEAM_SIZE = 6;
+const DEFAULT_CONFIG = { friendlyCount: 2, enemyCount: 2 };
 const TANK_RADIUS = 28;
 const MAX_HP = 100;
 const PLAYER_SPEED = 268;
@@ -16,9 +19,25 @@ const RAPID_FIRE_COOLDOWN = 0.18;
 const RESPAWN_TIME = 2.15;
 const PICKUP_RESPAWN = 7.8;
 
-const SPAWNS = {
-  player: { x: 210, y: WORLD.height / 2, angle: 0 },
-  bot: { x: WORLD.width - 210, y: WORLD.height / 2, angle: Math.PI },
+const TEAM_META = {
+  blue: {
+    id: "blue",
+    name: "Blue Team",
+    short: "BLUE",
+    side: "left",
+    accent: "#fff1b1",
+    bullet: "#e7fbff",
+    colors: ["#79d6ff", "#5ac9ff", "#4d9fff", "#7be3ff", "#5cc0d8", "#90b7ff"],
+  },
+  red: {
+    id: "red",
+    name: "Red Team",
+    short: "RED",
+    side: "right",
+    accent: "#ffe8d9",
+    bullet: "#ffe6d7",
+    colors: ["#ff876c", "#ff6b6b", "#ff9f5f", "#ffb38b", "#d96b6b", "#ff8f9d"],
+  },
 };
 
 const WALLS = [
@@ -57,6 +76,8 @@ const state = {
   mode: "menu",
   time: 0,
   round: 1,
+  config: { ...DEFAULT_CONFIG },
+  scoreTarget: getScoreTarget(DEFAULT_CONFIG),
   message: "",
   messageTimer: 0,
   buttons: [],
@@ -65,82 +86,17 @@ const state = {
   pickupTimer: 2.5,
   bullets: [],
   particles: [],
-  botBrain: null,
-  player: null,
-  bot: null,
-  winner: null,
+  tanks: [],
+  teams: createTeams(DEFAULT_CONFIG),
+  botBrains: {},
+  localPlayerId: null,
+  winnerTeam: null,
 };
 
 let bulletIdCounter = 1;
 let pickupIdCounter = 1;
 let lastFrameTime = performance.now();
 let rafId = 0;
-
-function createTank(id, label, color, accent, spawn) {
-  return {
-    id,
-    label,
-    color,
-    accent,
-    spawn,
-    x: spawn.x,
-    y: spawn.y,
-    radius: TANK_RADIUS,
-    bodyAngle: spawn.angle,
-    turretAngle: spawn.angle,
-    hp: MAX_HP,
-    score: 0,
-    alive: true,
-    respawnTimer: 0,
-    fireCooldown: 0,
-    rapidFireTimer: 0,
-    shield: false,
-    flashTimer: 0,
-    moveX: 0,
-    moveY: 0,
-    lastHitBy: null,
-  };
-}
-
-function resetMatch() {
-  state.player = createTank("player", "PLAYER", "#79d6ff", "#fff1b1", SPAWNS.player);
-  state.bot = createTank("bot", "BOT", "#ff876c", "#ffe8d9", SPAWNS.bot);
-  state.mode = "playing";
-  state.time = 0;
-  state.round = 1;
-  state.message = "First to 3 kills wins.";
-  state.messageTimer = 2.4;
-  state.pickup = null;
-  state.pickupTimer = 2.5;
-  state.bullets = [];
-  state.particles = [];
-  state.winner = null;
-  state.botBrain = {
-    strafeDir: 1,
-    switchTimer: 0.9,
-    dodgeTimer: 0,
-    burstCooldown: 0,
-    retreatTimer: 0,
-  };
-}
-
-function restartToMenu() {
-  state.player = createTank("player", "PLAYER", "#79d6ff", "#fff1b1", SPAWNS.player);
-  state.bot = createTank("bot", "BOT", "#ff876c", "#ffe8d9", SPAWNS.bot);
-  state.mode = "menu";
-  state.message = "";
-  state.messageTimer = 0;
-  state.buttons = [];
-  state.hoveredButton = null;
-  state.pickup = null;
-  state.bullets = [];
-  state.particles = [];
-  state.winner = null;
-}
-
-function startGame() {
-  resetMatch();
-}
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -157,6 +113,229 @@ function angleDiff(a, b) {
   return diff;
 }
 
+function clampTeamSize(value) {
+  return clamp(Math.round(value), MIN_TEAM_SIZE, MAX_TEAM_SIZE);
+}
+
+function normalizeConfig(patch = {}) {
+  return {
+    friendlyCount:
+      typeof patch.friendlyCount === "number"
+        ? clampTeamSize(patch.friendlyCount)
+        : state.config.friendlyCount,
+    enemyCount:
+      typeof patch.enemyCount === "number" ? clampTeamSize(patch.enemyCount) : state.config.enemyCount,
+  };
+}
+
+function getScoreTarget(config) {
+  return Math.max(MIN_SCORE_TO_WIN, Math.max(config.friendlyCount, config.enemyCount) + 1);
+}
+
+function createTeams(config) {
+  return {
+    blue: {
+      id: "blue",
+      name: TEAM_META.blue.name,
+      short: TEAM_META.blue.short,
+      count: config.friendlyCount,
+      score: 0,
+    },
+    red: {
+      id: "red",
+      name: TEAM_META.red.name,
+      short: TEAM_META.red.short,
+      count: config.enemyCount,
+      score: 0,
+    },
+  };
+}
+
+function buildSpawnSlots(side, count) {
+  const topPadding = 120;
+  const usableHeight = WORLD.height - topPadding * 2;
+  const direction = side === "left" ? 1 : -1;
+  const baseX = side === "left" ? 190 : WORLD.width - 190;
+  const angle = side === "left" ? 0 : Math.PI;
+
+  return Array.from({ length: count }, (_, index) => {
+    const y =
+      count === 1
+        ? WORLD.height / 2
+        : topPadding + (usableHeight * (index + 1)) / (count + 1);
+    const columnOffset = (index % 2) * 54;
+    const depthOffset = Math.floor(index / 2) * 14;
+    return {
+      x: baseX + direction * (columnOffset + depthOffset),
+      y,
+      angle,
+    };
+  });
+}
+
+function createBotBrain() {
+  return {
+    strafeDir: Math.random() > 0.5 ? 1 : -1,
+    switchTimer: 0.7 + Math.random() * 0.8,
+    burstCooldown: 0.18 + Math.random() * 0.28,
+    retreatTimer: 0,
+  };
+}
+
+function createTank({ id, label, teamId, spawn, controlled = false, variantIndex = 0 }) {
+  const meta = TEAM_META[teamId];
+  return {
+    id,
+    label,
+    teamId,
+    controlled,
+    color: meta.colors[variantIndex % meta.colors.length],
+    accent: meta.accent,
+    bulletColor: meta.bullet,
+    spawn,
+    x: spawn.x,
+    y: spawn.y,
+    radius: TANK_RADIUS,
+    bodyAngle: spawn.angle,
+    turretAngle: spawn.angle,
+    hp: MAX_HP,
+    score: 0,
+    deaths: 0,
+    alive: true,
+    respawnTimer: 0,
+    fireCooldown: 0,
+    rapidFireTimer: 0,
+    shield: false,
+    flashTimer: 0,
+    moveX: 0,
+    moveY: 0,
+    lastHitBy: null,
+    speed: controlled ? PLAYER_SPEED : BOT_SPEED,
+  };
+}
+
+function buildMatchState(config) {
+  const tanks = [];
+  const botBrains = {};
+  let localPlayerId = null;
+
+  const friendlySpawns = buildSpawnSlots(TEAM_META.blue.side, config.friendlyCount);
+  friendlySpawns.forEach((spawn, index) => {
+    const controlled = index === 0;
+    const tank = createTank({
+      id: controlled ? "player" : `ally-${index}`,
+      label: controlled ? "YOU" : `ALLY ${index}`,
+      teamId: "blue",
+      spawn,
+      controlled,
+      variantIndex: index,
+    });
+    tanks.push(tank);
+    if (controlled) {
+      localPlayerId = tank.id;
+    } else {
+      botBrains[tank.id] = createBotBrain();
+    }
+  });
+
+  const enemySpawns = buildSpawnSlots(TEAM_META.red.side, config.enemyCount);
+  enemySpawns.forEach((spawn, index) => {
+    const tank = createTank({
+      id: index === 0 ? "bot" : `enemy-${index + 1}`,
+      label: `ENEMY ${index + 1}`,
+      teamId: "red",
+      spawn,
+      variantIndex: index,
+    });
+    tanks.push(tank);
+    botBrains[tank.id] = createBotBrain();
+  });
+
+  return { tanks, botBrains, localPlayerId };
+}
+
+function getTankById(id) {
+  return state.tanks.find((tank) => tank.id === id) || null;
+}
+
+function resolveTankIdentifier(id) {
+  if (id === "player") return getLocalPlayer();
+  if (id === "bot") return getLeadEnemy();
+  return getTankById(id);
+}
+
+function getTeamTanks(teamId) {
+  return state.tanks.filter((tank) => tank.teamId === teamId);
+}
+
+function getOpposingTanks(teamId) {
+  return state.tanks.filter((tank) => tank.teamId !== teamId);
+}
+
+function getAliveTeamCount(teamId) {
+  return getTeamTanks(teamId).filter((tank) => tank.alive).length;
+}
+
+function getLocalPlayer() {
+  return state.localPlayerId ? getTankById(state.localPlayerId) : null;
+}
+
+function getLeadEnemy() {
+  return state.tanks.find((tank) => tank.teamId === "red") || null;
+}
+
+function updateConfig(patch) {
+  state.config = normalizeConfig(patch);
+  state.scoreTarget = getScoreTarget(state.config);
+  state.teams = createTeams(state.config);
+}
+
+function resetMatch() {
+  const config = { ...state.config };
+  const matchState = buildMatchState(config);
+  state.mode = "playing";
+  state.time = 0;
+  state.round = 1;
+  state.scoreTarget = getScoreTarget(config);
+  state.teams = createTeams(config);
+  state.tanks = matchState.tanks;
+  state.botBrains = matchState.botBrains;
+  state.localPlayerId = matchState.localPlayerId;
+  state.message = `${config.friendlyCount} vs ${config.enemyCount}. First to ${state.scoreTarget} team kills wins.`;
+  state.messageTimer = 2.6;
+  state.buttons = [];
+  state.hoveredButton = null;
+  state.pickup = null;
+  state.pickupTimer = 2.5;
+  state.bullets = [];
+  state.particles = [];
+  state.winnerTeam = null;
+}
+
+function restartToMenu() {
+  state.mode = "menu";
+  state.time = 0;
+  state.round = 1;
+  state.scoreTarget = getScoreTarget(state.config);
+  state.message = "";
+  state.messageTimer = 0;
+  state.buttons = [];
+  state.hoveredButton = null;
+  state.pickup = null;
+  state.pickupTimer = 2.5;
+  state.bullets = [];
+  state.particles = [];
+  state.tanks = [];
+  state.teams = createTeams(state.config);
+  state.botBrains = {};
+  state.localPlayerId = null;
+  state.winnerTeam = null;
+}
+
+function startGame() {
+  resetMatch();
+}
+
 function circleRectCollides(x, y, radius, rect) {
   const nearestX = clamp(x, rect.x, rect.x + rect.w);
   const nearestY = clamp(y, rect.y, rect.y + rect.h);
@@ -168,8 +347,8 @@ function circleRectCollides(x, y, radius, rect) {
 function lineBlocked(x1, y1, x2, y2) {
   const distance = Math.hypot(x2 - x1, y2 - y1);
   const steps = Math.max(1, Math.ceil(distance / 18));
-  for (let i = 0; i <= steps; i++) {
-    const t = i / steps;
+  for (let index = 0; index <= steps; index += 1) {
+    const t = index / steps;
     const px = lerp(x1, x2, t);
     const py = lerp(y1, y2, t);
     for (const wall of WALLS) {
@@ -183,6 +362,7 @@ function lineBlocked(x1, y1, x2, y2) {
 
 function resolveTankMovement(tank, moveX, moveY, speed, dt) {
   if (!tank.alive) return;
+
   let nextX = tank.x + moveX * speed * dt;
   nextX = clamp(nextX, tank.radius, WORLD.width - tank.radius);
   let collidedX = false;
@@ -216,12 +396,72 @@ function resolveTankMovement(tank, moveX, moveY, speed, dt) {
   }
 }
 
+function nudgeTank(tank, dx, dy) {
+  if (!tank.alive) return;
+
+  let nextX = clamp(tank.x + dx, tank.radius, WORLD.width - tank.radius);
+  let collidedX = false;
+  for (const wall of WALLS) {
+    if (circleRectCollides(nextX, tank.y, tank.radius, wall)) {
+      collidedX = true;
+      break;
+    }
+  }
+  if (!collidedX) {
+    tank.x = nextX;
+  }
+
+  let nextY = clamp(tank.y + dy, tank.radius, WORLD.height - tank.radius);
+  let collidedY = false;
+  for (const wall of WALLS) {
+    if (circleRectCollides(tank.x, nextY, tank.radius, wall)) {
+      collidedY = true;
+      break;
+    }
+  }
+  if (!collidedY) {
+    tank.y = nextY;
+  }
+}
+
+function separateOverlappingTanks(iterations = 1) {
+  for (let step = 0; step < iterations; step += 1) {
+    for (let index = 0; index < state.tanks.length; index += 1) {
+      const tankA = state.tanks[index];
+      if (!tankA.alive) continue;
+
+      for (let inner = index + 1; inner < state.tanks.length; inner += 1) {
+        const tankB = state.tanks[inner];
+        if (!tankB.alive) continue;
+
+        const dx = tankB.x - tankA.x;
+        const dy = tankB.y - tankA.y;
+        const distSq = dx * dx + dy * dy;
+        const minDist = tankA.radius + tankB.radius + 4;
+        if (distSq >= minDist * minDist) continue;
+
+        const dist = Math.max(0.001, Math.sqrt(distSq));
+        let nx = dx / dist;
+        let ny = dy / dist;
+        if (!Number.isFinite(nx) || !Number.isFinite(ny)) {
+          nx = index % 2 === 0 ? 1 : 0;
+          ny = index % 2 === 0 ? 0 : 1;
+        }
+        const push = (minDist - dist) / 2;
+        nudgeTank(tankA, -nx * push, -ny * push);
+        nudgeTank(tankB, nx * push, ny * push);
+      }
+    }
+  }
+}
+
 function spawnBullet(owner) {
   const muzzleDistance = owner.radius + 18;
   const angle = owner.turretAngle;
   state.bullets.push({
     id: bulletIdCounter++,
     ownerId: owner.id,
+    teamId: owner.teamId,
     x: owner.x + Math.cos(angle) * muzzleDistance,
     y: owner.y + Math.sin(angle) * muzzleDistance,
     vx: Math.cos(angle) * BULLET_SPEED,
@@ -229,9 +469,18 @@ function spawnBullet(owner) {
     angle,
     life: BULLET_LIFETIME,
     radius: 6,
+    color: owner.bulletColor,
   });
   owner.fireCooldown = owner.rapidFireTimer > 0 ? RAPID_FIRE_COOLDOWN : BASE_FIRE_COOLDOWN;
   addFlash(owner.x, owner.y, owner.color, 34, 0.16);
+}
+
+function finishMatch(teamId) {
+  state.mode = "finished";
+  state.winnerTeam = teamId;
+  state.message = `${TEAM_META[teamId].name} wins the battle.`;
+  state.messageTimer = 999;
+  state.bullets = [];
 }
 
 function killTank(victim, attacker) {
@@ -239,17 +488,20 @@ function killTank(victim, attacker) {
   victim.respawnTimer = RESPAWN_TIME;
   victim.hp = 0;
   victim.shield = false;
-  attacker.score += 1;
-  attacker.lastHitBy = attacker.id;
+  victim.deaths += 1;
+  victim.lastHitBy = attacker ? attacker.id : null;
   state.round += 1;
   addBurst(victim.x, victim.y, victim.color, 68, 0.45);
-  showMessage(`${attacker.label} scores!`, 1.25);
 
-  if (attacker.score >= TARGET_SCORE) {
-    state.mode = "finished";
-    state.winner = attacker.id;
-    state.message = attacker.id === "player" ? "You win the duel." : "The bot wins the duel.";
-    state.messageTimer = 999;
+  if (attacker) {
+    attacker.score += 1;
+    state.teams[attacker.teamId].score += 1;
+    showMessage(`${TEAM_META[attacker.teamId].short} TEAM scores!`, 1.25);
+    if (state.teams[attacker.teamId].score >= state.scoreTarget) {
+      finishMatch(attacker.teamId);
+    }
+  } else {
+    showMessage(`${victim.label} destroyed.`, 1.0);
   }
 }
 
@@ -387,21 +639,35 @@ function updateBullets(dt) {
     }
     if (destroyed) continue;
 
-    const target = bullet.ownerId === "player" ? state.bot : state.player;
-    if (target.alive) {
-      const dx = bullet.x - target.x;
-      const dy = bullet.y - target.y;
-      const hitDistance = target.radius + bullet.radius;
-      if (dx * dx + dy * dy <= hitDistance * hitDistance) {
-        const attacker = bullet.ownerId === "player" ? state.player : state.bot;
-        tryApplyDamage(target, attacker, BULLET_DAMAGE);
-        destroyed = true;
+    let target = null;
+    let targetDistSq = Infinity;
+    for (const tank of state.tanks) {
+      if (!tank.alive || tank.teamId === bullet.teamId) continue;
+      const dx = bullet.x - tank.x;
+      const dy = bullet.y - tank.y;
+      const hitDistance = tank.radius + bullet.radius;
+      const distSq = dx * dx + dy * dy;
+      if (distSq <= hitDistance * hitDistance && distSq < targetDistSq) {
+        target = tank;
+        targetDistSq = distSq;
       }
+    }
+
+    if (target) {
+      const attacker = getTankById(bullet.ownerId);
+      if (attacker) {
+        tryApplyDamage(target, attacker, BULLET_DAMAGE);
+      }
+      destroyed = true;
+    }
+
+    if (state.mode === "finished") {
+      break;
     }
 
     if (!destroyed) nextBullets.push(bullet);
   }
-  state.bullets = nextBullets;
+  state.bullets = state.mode === "finished" ? [] : nextBullets;
 }
 
 function updateTankStatus(tank, dt) {
@@ -417,8 +683,8 @@ function updateTankStatus(tank, dt) {
 }
 
 function updatePlayer(dt) {
-  const tank = state.player;
-  if (!tank.alive) return;
+  const tank = getLocalPlayer();
+  if (!tank || !tank.alive) return;
 
   let moveX = 0;
   let moveY = 0;
@@ -434,7 +700,7 @@ function updatePlayer(dt) {
   }
 
   tank.turretAngle = Math.atan2(input.mouseY - tank.y, input.mouseX - tank.x);
-  resolveTankMovement(tank, moveX, moveY, PLAYER_SPEED, dt);
+  resolveTankMovement(tank, moveX, moveY, tank.speed, dt);
 
   if (input.fire && tank.fireCooldown <= 0) {
     spawnBullet(tank);
@@ -449,15 +715,48 @@ function updatePlayer(dt) {
   }
 }
 
-function updateBot(dt) {
-  const tank = state.bot;
-  const player = state.player;
-  const brain = state.botBrain;
+function shouldBotChasePickup(tank, pickup) {
+  if (!pickup) return false;
+  return (
+    (pickup.type === "heal" && tank.hp < 58) ||
+    (pickup.type === "shield" && !tank.shield) ||
+    (pickup.type === "rapid" && tank.rapidFireTimer < 1)
+  );
+}
+
+function chooseCombatTarget(tank) {
+  const player = getLocalPlayer();
+  const enemies = getOpposingTanks(tank.teamId).filter((enemy) => enemy.alive);
+  let bestTarget = null;
+  let bestScore = Infinity;
+
+  for (const enemy of enemies) {
+    let score = Math.hypot(enemy.x - tank.x, enemy.y - tank.y);
+    if (player && enemy.id === player.id && tank.teamId !== player.teamId) {
+      score *= 0.82;
+    }
+    if (!lineBlocked(tank.x, tank.y, enemy.x, enemy.y)) {
+      score -= 45;
+    }
+    if (enemy.shield) {
+      score += 28;
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      bestTarget = enemy;
+    }
+  }
+
+  return bestTarget;
+}
+
+function updateBot(tank, dt) {
   if (!tank.alive) return;
 
+  const brain = state.botBrains[tank.id] || createBotBrain();
+  state.botBrains[tank.id] = brain;
   brain.switchTimer -= dt;
   brain.burstCooldown = Math.max(0, brain.burstCooldown - dt);
-  brain.dodgeTimer = Math.max(0, brain.dodgeTimer - dt);
   brain.retreatTimer = Math.max(0, brain.retreatTimer - dt);
 
   if (brain.switchTimer <= 0) {
@@ -465,29 +764,26 @@ function updateBot(dt) {
     brain.strafeDir *= Math.random() > 0.3 ? -1 : 1;
   }
 
-  let targetX = player.x;
-  let targetY = player.y;
-  let desiredDistance = 340;
+  const target = chooseCombatTarget(tank);
+  if (!target) return;
 
-  if (state.pickup) {
-    const needsPickup =
-      (state.pickup.type === "heal" && tank.hp < 58) ||
-      (state.pickup.type === "shield" && !tank.shield) ||
-      (state.pickup.type === "rapid" && tank.rapidFireTimer < 1);
-    if (needsPickup) {
-      targetX = state.pickup.x;
-      targetY = state.pickup.y;
-      desiredDistance = 12;
-    }
-  }
-
-  const toPlayerX = player.x - tank.x;
-  const toPlayerY = player.y - tank.y;
-  const distanceToPlayer = Math.hypot(toPlayerX, toPlayerY) || 1;
-  const aimAngle = Math.atan2(toPlayerY, toPlayerX);
+  const toTargetX = target.x - tank.x;
+  const toTargetY = target.y - tank.y;
+  const distanceToTarget = Math.hypot(toTargetX, toTargetY) || 1;
+  const aimAngle = Math.atan2(toTargetY, toTargetX);
   tank.turretAngle = aimAngle;
 
-  if (distanceToPlayer < 220 && !tank.shield) {
+  let moveTargetX = target.x;
+  let moveTargetY = target.y;
+  let desiredDistance = 340;
+
+  if (state.pickup && shouldBotChasePickup(tank, state.pickup)) {
+    moveTargetX = state.pickup.x;
+    moveTargetY = state.pickup.y;
+    desiredDistance = 14;
+  }
+
+  if (distanceToTarget < 220 && !tank.shield) {
     brain.retreatTimer = 0.5;
   }
 
@@ -495,22 +791,22 @@ function updateBot(dt) {
   let moveY = 0;
 
   if (brain.retreatTimer > 0) {
-    moveX = -toPlayerX / distanceToPlayer;
-    moveY = -toPlayerY / distanceToPlayer;
+    moveX = -toTargetX / distanceToTarget;
+    moveY = -toTargetY / distanceToTarget;
   } else {
-    const toTargetX = targetX - tank.x;
-    const toTargetY = targetY - tank.y;
-    const distanceToTarget = Math.hypot(toTargetX, toTargetY) || 1;
-    if (distanceToTarget > desiredDistance + 24) {
-      moveX = toTargetX / distanceToTarget;
-      moveY = toTargetY / distanceToTarget;
-    } else if (distanceToPlayer < desiredDistance - 40) {
-      moveX = -toPlayerX / distanceToPlayer;
-      moveY = -toPlayerY / distanceToPlayer;
+    const toMoveTargetX = moveTargetX - tank.x;
+    const toMoveTargetY = moveTargetY - tank.y;
+    const distanceToMoveTarget = Math.hypot(toMoveTargetX, toMoveTargetY) || 1;
+    if (distanceToMoveTarget > desiredDistance + 24) {
+      moveX = toMoveTargetX / distanceToMoveTarget;
+      moveY = toMoveTargetY / distanceToMoveTarget;
+    } else if (distanceToTarget < desiredDistance - 40) {
+      moveX = -toTargetX / distanceToTarget;
+      moveY = -toTargetY / distanceToTarget;
     }
 
-    moveX += (-toPlayerY / distanceToPlayer) * 0.75 * brain.strafeDir;
-    moveY += (toPlayerX / distanceToPlayer) * 0.75 * brain.strafeDir;
+    moveX += (-toTargetY / distanceToTarget) * 0.75 * brain.strafeDir;
+    moveY += (toTargetX / distanceToTarget) * 0.75 * brain.strafeDir;
   }
 
   if (moveX || moveY) {
@@ -535,7 +831,7 @@ function updateBot(dt) {
     moveY = swapY;
   }
 
-  resolveTankMovement(tank, moveX, moveY, BOT_SPEED, dt);
+  resolveTankMovement(tank, moveX, moveY, tank.speed, dt);
 
   if (state.pickup) {
     const dx = tank.x - state.pickup.x;
@@ -545,13 +841,13 @@ function updateBot(dt) {
     }
   }
 
-  const hasSight = !lineBlocked(tank.x, tank.y, player.x, player.y);
+  const hasSight = !lineBlocked(tank.x, tank.y, target.x, target.y);
   const angleError = Math.abs(angleDiff(tank.turretAngle, aimAngle));
   const wantsToShoot =
     hasSight &&
-    distanceToPlayer < 700 &&
+    distanceToTarget < 700 &&
     angleError < 0.24 &&
-    (distanceToPlayer < 440 || brain.burstCooldown <= 0);
+    (distanceToTarget < 440 || brain.burstCooldown <= 0);
 
   if (wantsToShoot && tank.fireCooldown <= 0) {
     spawnBullet(tank);
@@ -560,17 +856,19 @@ function updateBot(dt) {
 }
 
 function updateGameplay(dt) {
-  if (!state.player || !state.bot) return;
-  updateTankStatus(state.player, dt);
-  updateTankStatus(state.bot, dt);
+  if (!state.tanks.length || state.mode !== "playing") return;
 
-  if (state.mode !== "playing") {
-    updateBullets(dt);
-    return;
+  for (const tank of state.tanks) {
+    updateTankStatus(tank, dt);
   }
 
   updatePlayer(dt);
-  updateBot(dt);
+  for (const tank of state.tanks) {
+    if (!tank.controlled) {
+      updateBot(tank, dt);
+    }
+  }
+  separateOverlappingTanks(2);
   updateBullets(dt);
   maybeSpawnPickup(dt);
 }
@@ -610,12 +908,28 @@ function updateMousePosition(event) {
 }
 
 function handleButtonPress(id) {
-  if (id === "start") {
+  if (id === "start" || id === "restart") {
     startGame();
-  } else if (id === "restart") {
-    startGame();
-  } else if (id === "menu") {
+    return;
+  }
+  if (id === "menu") {
     restartToMenu();
+    return;
+  }
+  if (id === "dec-friendly") {
+    updateConfig({ friendlyCount: state.config.friendlyCount - 1 });
+    return;
+  }
+  if (id === "inc-friendly") {
+    updateConfig({ friendlyCount: state.config.friendlyCount + 1 });
+    return;
+  }
+  if (id === "dec-enemy") {
+    updateConfig({ enemyCount: state.config.enemyCount - 1 });
+    return;
+  }
+  if (id === "inc-enemy") {
+    updateConfig({ enemyCount: state.config.enemyCount + 1 });
   }
 }
 
@@ -623,23 +937,6 @@ function pickButtonAt(x, y) {
   return state.buttons.find(
     (button) => x >= button.x && x <= button.x + button.w && y >= button.y && y <= button.y + button.h
   );
-}
-
-function drawButton(button, label) {
-  const hovered = state.hoveredButton === button.id;
-  ctx.save();
-  ctx.fillStyle = hovered ? "rgba(255, 194, 96, 0.95)" : "rgba(12, 34, 47, 0.84)";
-  ctx.strokeStyle = hovered ? "rgba(255, 240, 198, 0.95)" : "rgba(169, 216, 255, 0.25)";
-  ctx.lineWidth = 2;
-  roundRect(ctx, button.x, button.y, button.w, button.h, 18);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = hovered ? "#132631" : "#edf7ff";
-  ctx.font = "600 34px Trebuchet MS";
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(label, button.x + button.w / 2, button.y + button.h / 2 + 2);
-  ctx.restore();
 }
 
 function roundRect(context, x, y, w, h, radius) {
@@ -650,6 +947,25 @@ function roundRect(context, x, y, w, h, radius) {
   context.arcTo(x, y + h, x, y, radius);
   context.arcTo(x, y, x + w, y, radius);
   context.closePath();
+}
+
+function drawButton(button, label, options = {}) {
+  const hovered = state.hoveredButton === button.id;
+  const fontSize = options.fontSize || 34;
+  const radius = options.radius || 18;
+  ctx.save();
+  ctx.fillStyle = hovered ? "rgba(255, 194, 96, 0.95)" : "rgba(12, 34, 47, 0.84)";
+  ctx.strokeStyle = hovered ? "rgba(255, 240, 198, 0.95)" : "rgba(169, 216, 255, 0.25)";
+  ctx.lineWidth = 2;
+  roundRect(ctx, button.x, button.y, button.w, button.h, radius);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = hovered ? "#132631" : "#edf7ff";
+  ctx.font = `600 ${fontSize}px Trebuchet MS`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, button.x + button.w / 2, button.y + button.h / 2 + 2);
+  ctx.restore();
 }
 
 function drawArena() {
@@ -724,6 +1040,14 @@ function drawTank(tank) {
   ctx.save();
   ctx.translate(tank.x, tank.y);
 
+  if (tank.controlled && tank.alive) {
+    ctx.strokeStyle = "rgba(255, 232, 177, 0.75)";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, tank.radius + 14, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   if (tank.shield && tank.alive) {
     ctx.strokeStyle = "rgba(126, 242, 255, 0.88)";
     ctx.lineWidth = 5;
@@ -744,7 +1068,6 @@ function drawTank(tank) {
   ctx.fillStyle = `rgba(255,255,255,${0.1 + flash})`;
   roundRect(ctx, -18, -18, 36, 36, 10);
   ctx.fill();
-
   ctx.restore();
 
   ctx.save();
@@ -763,7 +1086,7 @@ function drawTank(tank) {
   ctx.fillStyle = "rgba(7, 19, 29, 0.64)";
   roundRect(ctx, tank.x - 44, tank.y - 52, 88, 10, 5);
   ctx.fill();
-  ctx.fillStyle = tank.id === "player" ? "#79d6ff" : "#ff876c";
+  ctx.fillStyle = tank.color;
   roundRect(ctx, tank.x - 44, tank.y - 52, 88 * (tank.hp / MAX_HP), 10, 5);
   ctx.fill();
   ctx.fillStyle = "#f2f8fb";
@@ -778,7 +1101,7 @@ function drawBullets() {
     ctx.save();
     ctx.translate(bullet.x, bullet.y);
     ctx.rotate(bullet.angle);
-    ctx.fillStyle = bullet.ownerId === "player" ? "#e7fbff" : "#ffe6d7";
+    ctx.fillStyle = bullet.color;
     roundRect(ctx, -8, -4, 16, 8, 4);
     ctx.fill();
     ctx.restore();
@@ -817,59 +1140,85 @@ function drawHudPanel(x, y, w, h) {
   ctx.restore();
 }
 
-function drawHud() {
-  drawHudPanel(22, 20, 340, 96);
-  drawHudPanel(WORLD.width - 362, 20, 340, 96);
-  drawHudPanel(590, 20, 420, 96);
+function drawMenuSelector(x, y, title, subtitle, count, decId, incId, tint) {
+  drawHudPanel(x, y, 300, 200);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = tint;
+  ctx.font = "700 30px Trebuchet MS";
+  ctx.fillText(title, x + 150, y + 44);
+
+  ctx.fillStyle = "#98b5c7";
+  ctx.font = "500 18px Trebuchet MS";
+  ctx.fillText(subtitle, x + 150, y + 74);
 
   ctx.fillStyle = "#edf7ff";
-  ctx.font = "700 26px Trebuchet MS";
+  ctx.font = "700 66px Trebuchet MS";
+  ctx.fillText(String(count), x + 150, y + 136);
+
+  ctx.fillStyle = "#98b5c7";
+  ctx.font = "500 18px Trebuchet MS";
+  ctx.fillText(`1 - ${MAX_TEAM_SIZE} tanks`, x + 150, y + 176);
+
+  const decButton = { id: decId, x: x + 24, y: y + 92, w: 64, h: 64 };
+  const incButton = { id: incId, x: x + 212, y: y + 92, w: 64, h: 64 };
+  state.buttons.push(decButton, incButton);
+  drawButton(decButton, "-", { fontSize: 44, radius: 16 });
+  drawButton(incButton, "+", { fontSize: 44, radius: 16 });
+}
+
+function drawHud() {
+  const player = getLocalPlayer();
+  const blueAlive = getAliveTeamCount("blue");
+  const redAlive = getAliveTeamCount("red");
+
+  drawHudPanel(22, 20, 350, 110);
+  drawHudPanel(WORLD.width - 372, 20, 350, 110);
+  drawHudPanel(500, 20, 600, 110);
+
   ctx.textAlign = "left";
-  ctx.fillText("PLAYER", 48, 58);
+  ctx.fillStyle = "#edf7ff";
+  ctx.font = "700 26px Trebuchet MS";
+  ctx.fillText("BLUE TEAM", 48, 56);
   ctx.font = "600 18px Trebuchet MS";
   ctx.fillStyle = "#98b5c7";
-  ctx.fillText(`HP ${Math.round(state.player.hp)} / ${MAX_HP}`, 48, 86);
-  ctx.fillText(`Score ${state.player.score} / ${TARGET_SCORE}`, 48, 108);
+  ctx.fillText(`Alive ${blueAlive} / ${state.teams.blue.count}`, 48, 84);
+  ctx.fillText(`Score ${state.teams.blue.score} / ${state.scoreTarget}`, 48, 108);
 
   ctx.textAlign = "right";
   ctx.fillStyle = "#edf7ff";
   ctx.font = "700 26px Trebuchet MS";
-  ctx.fillText("BOT", WORLD.width - 48, 58);
+  ctx.fillText("RED TEAM", WORLD.width - 48, 56);
   ctx.font = "600 18px Trebuchet MS";
   ctx.fillStyle = "#98b5c7";
-  ctx.fillText(`HP ${Math.round(state.bot.hp)} / ${MAX_HP}`, WORLD.width - 48, 86);
-  ctx.fillText(`Score ${state.bot.score} / ${TARGET_SCORE}`, WORLD.width - 48, 108);
+  ctx.fillText(`Alive ${redAlive} / ${state.teams.red.count}`, WORLD.width - 48, 84);
+  ctx.fillText(`Score ${state.teams.red.score} / ${state.scoreTarget}`, WORLD.width - 48, 108);
 
   ctx.textAlign = "center";
   ctx.fillStyle = "#edf7ff";
   ctx.font = "700 24px Trebuchet MS";
-  ctx.fillText(`Round ${state.round}`, WORLD.width / 2, 52);
+  ctx.fillText(`Match ${state.config.friendlyCount} vs ${state.config.enemyCount}   Round ${state.round}`, WORLD.width / 2, 52);
+
+  const powerups = player
+    ? [
+        player.shield ? "Shield" : null,
+        player.rapidFireTimer > 0 ? `Rapid ${player.rapidFireTimer.toFixed(1)}s` : null,
+        player.alive ? `HP ${Math.round(player.hp)} / ${MAX_HP}` : `Respawn ${player.respawnTimer.toFixed(1)}s`,
+      ]
+        .filter(Boolean)
+        .join("  |  ")
+    : "Lead the blue team.";
+
   ctx.font = "600 18px Trebuchet MS";
   ctx.fillStyle = "#98b5c7";
-  const powerups = [
-    state.player.shield ? "Shield" : null,
-    state.player.rapidFireTimer > 0 ? `Rapid ${state.player.rapidFireTimer.toFixed(1)}s` : null,
-  ]
-    .filter(Boolean)
-    .join("  |  ");
   ctx.fillText(powerups || "No active powerup", WORLD.width / 2, 84);
   ctx.fillText("Move: WASD / Arrows   Shoot: Mouse / Space   F: Fullscreen", WORLD.width / 2, 108);
 
   if (state.message) {
-    drawHudPanel(WORLD.width / 2 - 250, WORLD.height - 98, 500, 58);
+    drawHudPanel(WORLD.width / 2 - 260, WORLD.height - 98, 520, 58);
     ctx.fillStyle = "#ffecb8";
     ctx.font = "700 24px Trebuchet MS";
-    ctx.textAlign = "center";
     ctx.fillText(state.message, WORLD.width / 2, WORLD.height - 60);
-  }
-
-  if (!state.player.alive || !state.bot.alive) {
-    const tank = state.player.alive ? state.bot : state.player;
-    const text = `${tank.label} respawns in ${tank.respawnTimer.toFixed(1)}s`;
-    drawHudPanel(WORLD.width / 2 - 170, 132, 340, 50);
-    ctx.fillStyle = "#edf7ff";
-    ctx.font = "700 20px Trebuchet MS";
-    ctx.fillText(text, WORLD.width / 2, 164);
   }
 }
 
@@ -885,52 +1234,67 @@ function drawMenu() {
   ctx.fillStyle = "#edf7ff";
   ctx.font = "700 72px Trebuchet MS";
   ctx.textAlign = "center";
-  ctx.fillText("TOP VIEW TANK DUEL", WORLD.width / 2, 220);
+  ctx.fillText("TOP VIEW TANK BATTLE", WORLD.width / 2, 200);
 
   ctx.fillStyle = "#ffb84d";
   ctx.font = "600 28px Trebuchet MS";
-  ctx.fillText("Fight a live bot in an arcade top-view arena.", WORLD.width / 2, 276);
+  ctx.fillText("Scale the arena to any N vs M team fight and lead the blue squad.", WORLD.width / 2, 252);
 
-  drawHudPanel(WORLD.width / 2 - 320, 320, 640, 210);
+  drawHudPanel(WORLD.width / 2 - 520, 300, 1040, 290);
   ctx.fillStyle = "#edf7ff";
   ctx.font = "600 26px Trebuchet MS";
-  ctx.fillText("Controls", WORLD.width / 2, 370);
-  ctx.font = "500 22px Trebuchet MS";
-  ctx.fillStyle = "#98b5c7";
-  ctx.fillText("Move with WASD or arrow keys.", WORLD.width / 2, 418);
-  ctx.fillText("Aim with the mouse and fire with click or Space.", WORLD.width / 2, 452);
-  ctx.fillText("Grab heal, rapid-fire, and shield pickups to outlast the bot.", WORLD.width / 2, 486);
+  ctx.fillText("Team Setup", WORLD.width / 2, 350);
 
-  const startButton = { id: "start", x: WORLD.width / 2 - 150, y: 580, w: 300, h: 74 };
-  state.buttons = [startButton];
-  drawButton(startButton, "Start Duel");
+  drawMenuSelector(WORLD.width / 2 - 450, 372, "Blue Team", "includes you + ally bots", state.config.friendlyCount, "dec-friendly", "inc-friendly", "#79d6ff");
+  drawMenuSelector(WORLD.width / 2 + 150, 372, "Red Team", "enemy bot squad", state.config.enemyCount, "dec-enemy", "inc-enemy", "#ff876c");
+
+  ctx.fillStyle = "#98b5c7";
+  ctx.font = "500 21px Trebuchet MS";
+  ctx.fillText(
+    `Current matchup ${state.config.friendlyCount} vs ${state.config.enemyCount}   |   First to ${state.scoreTarget} team kills`,
+    WORLD.width / 2,
+    622
+  );
+
+  const startButton = { id: "start", x: WORLD.width / 2 - 180, y: 666, w: 360, h: 76 };
+  state.buttons.push(startButton);
+  drawButton(startButton, `Start ${state.config.friendlyCount} vs ${state.config.enemyCount}`, {
+    fontSize: 30,
+    radius: 20,
+  });
 
   ctx.fillStyle = "#98b5c7";
   ctx.font = "500 18px Trebuchet MS";
-  ctx.fillText("Press Enter to begin", WORLD.width / 2, 700);
+  ctx.fillText("Press Enter to begin", WORLD.width / 2, 792);
 }
 
 function drawFinishedOverlay() {
+  const player = getLocalPlayer();
+  const didWin = !!player && state.winnerTeam === player.teamId;
+
   ctx.save();
   ctx.fillStyle = "rgba(5, 12, 18, 0.62)";
   ctx.fillRect(0, 0, WORLD.width, WORLD.height);
   ctx.restore();
 
-  drawHudPanel(WORLD.width / 2 - 280, 220, 560, 290);
+  drawHudPanel(WORLD.width / 2 - 320, 220, 640, 320);
   ctx.fillStyle = "#edf7ff";
   ctx.font = "700 58px Trebuchet MS";
   ctx.textAlign = "center";
-  ctx.fillText(state.winner === "player" ? "VICTORY" : "DEFEAT", WORLD.width / 2, 304);
+  ctx.fillText(didWin ? "VICTORY" : "DEFEAT", WORLD.width / 2, 304);
   ctx.fillStyle = "#ffecb8";
   ctx.font = "600 28px Trebuchet MS";
   ctx.fillText(state.message, WORLD.width / 2, 352);
   ctx.fillStyle = "#98b5c7";
   ctx.font = "500 24px Trebuchet MS";
-  ctx.fillText(`Final Score ${state.player.score} : ${state.bot.score}`, WORLD.width / 2, 396);
+  ctx.fillText(`Final Score ${state.teams.blue.score} : ${state.teams.red.score}`, WORLD.width / 2, 396);
+  ctx.fillText(`Match ${state.config.friendlyCount} vs ${state.config.enemyCount}`, WORLD.width / 2, 430);
 
-  const restart = { id: "restart", x: WORLD.width / 2 - 170, y: 434, w: 340, h: 66 };
-  state.buttons = [restart];
-  drawButton(restart, "Restart Duel");
+  const restartButton = { id: "restart", x: WORLD.width / 2 - 186, y: 462, w: 372, h: 64 };
+  const menuButton = { id: "menu", x: WORLD.width / 2 - 120, y: 548, w: 240, h: 56 };
+  state.buttons.push(restartButton, menuButton);
+  drawButton(restartButton, "Restart Battle", { fontSize: 30, radius: 18 });
+  drawButton(menuButton, "Back to Menu", { fontSize: 26, radius: 18 });
 }
 
 function render() {
@@ -945,8 +1309,12 @@ function render() {
   drawArena();
   drawPickup(state.pickup);
   drawBullets();
-  drawTank(state.player);
-  drawTank(state.bot);
+  const orderedTanks = [...state.tanks].sort(
+    (tankA, tankB) => Number(tankA.alive) - Number(tankB.alive) || Number(tankA.controlled) - Number(tankB.controlled)
+  );
+  for (const tank of orderedTanks) {
+    drawTank(tank);
+  }
   drawParticles();
   drawHud();
 
@@ -981,6 +1349,7 @@ function handleKey(event, isDown) {
   ) {
     event.preventDefault();
   }
+
   if (key === "w" || key === "arrowup") input.up = isDown;
   if (key === "s" || key === "arrowdown") input.down = isDown;
   if (key === "a" || key === "arrowleft") input.left = isDown;
@@ -989,9 +1358,7 @@ function handleKey(event, isDown) {
 
   if (!isDown) return;
 
-  if (key === "enter" && state.mode === "menu") {
-    startGame();
-  } else if (key === "enter" && state.mode === "finished") {
+  if (key === "enter" && (state.mode === "menu" || state.mode === "finished")) {
     startGame();
   } else if (key === "escape" && document.fullscreenElement) {
     document.exitFullscreen();
@@ -1043,6 +1410,8 @@ function summarizeTank(tank) {
   return {
     id: tank.id,
     label: tank.label,
+    teamId: tank.teamId,
+    controlled: tank.controlled,
     x: Number(tank.x.toFixed(1)),
     y: Number(tank.y.toFixed(1)),
     bodyAngle: Number(tank.bodyAngle.toFixed(3)),
@@ -1052,14 +1421,19 @@ function summarizeTank(tank) {
     shield: tank.shield,
     rapidFireTimer: Number(tank.rapidFireTimer.toFixed(2)),
     score: tank.score,
+    deaths: tank.deaths,
     respawnTimer: Number(tank.respawnTimer.toFixed(2)),
   };
 }
 
 function renderGameToText() {
+  const player = getLocalPlayer();
+  const leadEnemy = getLeadEnemy();
   const payload = {
     mode: state.mode,
     message: state.message,
+    config: { ...state.config },
+    localPlayerId: state.localPlayerId,
     coordinateSystem: {
       origin: "top-left",
       xPositive: "right",
@@ -1067,11 +1441,26 @@ function renderGameToText() {
       worldWidth: WORLD.width,
       worldHeight: WORLD.height,
     },
-    player: summarizeTank(state.player),
-    bot: summarizeTank(state.bot),
+    scoreTarget: state.scoreTarget,
+    teams: {
+      blue: {
+        score: state.teams.blue.score,
+        count: state.teams.blue.count,
+        alive: getAliveTeamCount("blue"),
+      },
+      red: {
+        score: state.teams.red.score,
+        count: state.teams.red.count,
+        alive: getAliveTeamCount("red"),
+      },
+    },
+    player: summarizeTank(player),
+    bot: summarizeTank(leadEnemy),
+    tanks: state.tanks.map((tank) => summarizeTank(tank)),
     bullets: state.bullets.map((bullet) => ({
       id: bullet.id,
       ownerId: bullet.ownerId,
+      teamId: bullet.teamId,
       x: Number(bullet.x.toFixed(1)),
       y: Number(bullet.y.toFixed(1)),
       angle: Number(bullet.angle.toFixed(3)),
@@ -1084,8 +1473,14 @@ function renderGameToText() {
           y: state.pickup.y,
         }
       : null,
-    scoreTarget: TARGET_SCORE,
     walls: WALLS.map((wall) => ({ x: wall.x, y: wall.y, w: wall.w, h: wall.h })),
+    buttons: state.buttons.map((button) => ({
+      id: button.id,
+      x: button.x,
+      y: button.y,
+      w: button.w,
+      h: button.h,
+    })),
   };
   return JSON.stringify(payload);
 }
@@ -1101,11 +1496,21 @@ window.advanceTime = async (ms) => {
 window.__gameDebug = {
   startGame,
   restartToMenu,
+  setConfig(patch) {
+    updateConfig(patch);
+  },
   getState: () => JSON.parse(renderGameToText()),
+  getTankIds(teamId) {
+    return (teamId ? getTeamTanks(teamId) : state.tanks).map((tank) => tank.id);
+  },
   setTank(id, patch) {
-    const tank = id === "bot" ? state.bot : state.player;
+    const tank = resolveTankIdentifier(id);
     if (!tank) return;
     Object.assign(tank, patch);
+  },
+  setTeamScore(teamId, score) {
+    if (!state.teams[teamId]) return;
+    state.teams[teamId].score = Math.max(0, Math.round(score));
   },
   forcePickup(type, x, y) {
     state.pickup = {
@@ -1120,7 +1525,7 @@ window.__gameDebug = {
     state.bullets = [];
   },
   fire(id) {
-    const tank = id === "bot" ? state.bot : state.player;
+    const tank = resolveTankIdentifier(id);
     if (tank && tank.alive) {
       spawnBullet(tank);
     }
