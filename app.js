@@ -7,7 +7,7 @@ const MIN_SCORE_TO_WIN = 3;
 const MIN_TEAM_SIZE = 1;
 const MAX_TEAM_SIZE = 6;
 const DEFAULT_CONFIG = { friendlyCount: 2, enemyCount: 2 };
-const TANK_RADIUS = 28;
+const TANK_RADIUS = 22;
 const MAX_HP = 100;
 const PLAYER_SPEED = 268;
 const BOT_SPEED = 236;
@@ -23,6 +23,15 @@ const PICKUP_RADIUS = 22;
 const PICKUP_SEARCH_STEP = 32;
 const PICKUP_SEARCH_MAX_RINGS = 10;
 const PICKUP_ACCESS_PROBE_STEP = 16;
+const STAR_DURATION = 5;
+const MUSHROOM_DURATION = 9;
+const STAR_SPEED_MULTIPLIER = 1.5;
+const MUSHROOM_SCALE = 1.28;
+const MUSHROOM_BULLET_SCALE = 1.6;
+const SHELL_SPEED = 340;
+const SHELL_DAMAGE = 24;
+const SHELL_LIFETIME = 15;
+const NEUTRAL_TANK_HP = 72;
 
 const TEAM_META = {
   blue: {
@@ -259,7 +268,10 @@ const state = {
   hoveredButton: null,
   pickup: null,
   pickupTimer: 2.5,
+  specialItems: [],
+  hazards: [],
   bullets: [],
+  neutralTank: null,
   particles: [],
   tanks: [],
   teams: createTeams(DEFAULT_CONFIG),
@@ -272,6 +284,9 @@ let bulletIdCounter = 1;
 let pickupIdCounter = 1;
 let lastFrameTime = performance.now();
 let rafId = 0;
+let starAudioContext = null;
+let starLoopGain = null;
+let starLoopTimer = 0;
 
 const audioState = {
   unlocked: false,
@@ -375,6 +390,55 @@ function playPickupAudio(type) {
   }
 }
 
+function ensureStarAudio() {
+  if (!starAudioContext) {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    starAudioContext = new Ctx();
+  }
+  if (starAudioContext.state === "suspended") {
+    starAudioContext.resume().catch(() => {});
+  }
+  return starAudioContext;
+}
+
+function startStarLoop() {
+  if (starLoopTimer) return;
+  const ctx = ensureStarAudio();
+  if (!ctx) return;
+  starLoopGain = ctx.createGain();
+  starLoopGain.gain.value = 0.045;
+  starLoopGain.connect(ctx.destination);
+  const notes = [784, 988, 1175, 1568, 1175, 988, 1319, 1760];
+  let index = 0;
+  starLoopTimer = window.setInterval(() => {
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = index % 3 === 0 ? "square" : "triangle";
+    osc.frequency.setValueAtTime(notes[index % notes.length], now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.7, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+    osc.connect(gain);
+    gain.connect(starLoopGain);
+    osc.start(now);
+    osc.stop(now + 0.17);
+    index += 1;
+  }, 140);
+}
+
+function stopStarLoop() {
+  if (starLoopTimer) {
+    window.clearInterval(starLoopTimer);
+    starLoopTimer = 0;
+  }
+  if (starLoopGain) {
+    starLoopGain.disconnect();
+    starLoopGain = null;
+  }
+}
+
 function getCurrentMap() {
   return MAPS[state.mapIndex] || MAPS[0];
 }
@@ -385,6 +449,73 @@ function getCurrentWalls() {
 
 function getCurrentPickupPoints() {
   return getCurrentMap().pickupPoints;
+}
+
+function getNeutralTankSpawn(map) {
+  switch (map.id) {
+    case "iron-cross":
+      return { x: 800, y: 130 };
+    case "sandstorm":
+      return { x: 1330, y: 690 };
+    case "glacier-run":
+      return { x: 800, y: 450 };
+    case "neon-dock":
+      return { x: 220, y: 710 };
+    case "emerald-rift":
+      return { x: 800, y: 760 };
+    default:
+      return { x: 800, y: 140 };
+  }
+}
+
+function createNeutralTank(map) {
+  const spawn = getNeutralTankSpawn(map);
+  return {
+    x: spawn.x,
+    y: spawn.y,
+    w: 76,
+    h: 58,
+    hp: NEUTRAL_TANK_HP,
+    maxHp: NEUTRAL_TANK_HP,
+    alive: true,
+  };
+}
+
+function getNeutralTankRect(tank = state.neutralTank) {
+  if (!tank || !tank.alive) return null;
+  return {
+    x: tank.x - tank.w / 2,
+    y: tank.y - tank.h / 2,
+    w: tank.w,
+    h: tank.h,
+  };
+}
+
+function getArenaObstacles() {
+  const obstacles = [...getCurrentWalls()];
+  const neutralRect = getNeutralTankRect();
+  if (neutralRect) obstacles.push(neutralRect);
+  return obstacles;
+}
+
+function getTankScale(tank) {
+  return tank && tank.mushroomTimer > 0 ? MUSHROOM_SCALE : 1;
+}
+
+function getTankRadius(tank) {
+  return tank.radius * getTankScale(tank);
+}
+
+function getTankSpeed(baseSpeed, tank) {
+  return tank.starTimer > 0 ? baseSpeed * STAR_SPEED_MULTIPLIER : baseSpeed;
+}
+
+function getBulletScale(tank) {
+  return tank.mushroomTimer > 0 ? MUSHROOM_BULLET_SCALE : 1;
+}
+
+function getRainbowColor(offset = 0) {
+  return `hsl(${(state.time * 320 + offset) % 360} 92% 64%)`;
 }
 
 function isTankPlacementFree(x, y) {
@@ -804,6 +935,8 @@ function createTank({ id, label, teamId, spawn, controlled = false, variantIndex
     respawnTimer: 0,
     fireCooldown: 0,
     rapidFireTimer: 0,
+    starTimer: 0,
+    mushroomTimer: 0,
     shield: false,
     flashTimer: 0,
     moveX: 0,
@@ -907,9 +1040,13 @@ function resetMatch() {
   state.hoveredButton = null;
   state.pickup = null;
   state.pickupTimer = 2.5;
+  state.specialItems = [];
+  state.hazards = [];
   state.bullets = [];
+  state.neutralTank = createNeutralTank(getCurrentMap());
   state.particles = [];
   state.winnerTeam = null;
+  stopStarLoop();
   syncBgmToState();
 }
 
@@ -925,13 +1062,17 @@ function restartToMenu() {
   state.hoveredButton = null;
   state.pickup = null;
   state.pickupTimer = 2.5;
+  state.specialItems = [];
+  state.hazards = [];
   state.bullets = [];
+  state.neutralTank = createNeutralTank(getCurrentMap());
   state.particles = [];
   state.tanks = [];
   state.teams = createTeams(state.config);
   state.botBrains = {};
   state.localPlayerId = null;
   state.winnerTeam = null;
+  stopStarLoop();
   syncBgmToState();
 }
 
@@ -950,7 +1091,7 @@ function circleRectCollides(x, y, radius, rect) {
 function lineBlocked(x1, y1, x2, y2) {
   const distance = Math.hypot(x2 - x1, y2 - y1);
   const steps = Math.max(1, Math.ceil(distance / 18));
-  const walls = getCurrentWalls();
+  const walls = getArenaObstacles();
   for (let index = 0; index <= steps; index += 1) {
     const t = index / steps;
     const px = lerp(x1, x2, t);
@@ -966,12 +1107,13 @@ function lineBlocked(x1, y1, x2, y2) {
 
 function resolveTankMovement(tank, moveX, moveY, speed, dt) {
   if (!tank.alive) return;
-  const walls = getCurrentWalls();
+  const walls = getArenaObstacles();
+  const radius = getTankRadius(tank);
   let nextX = tank.x + moveX * speed * dt;
-  nextX = clamp(nextX, tank.radius, WORLD.width - tank.radius);
+  nextX = clamp(nextX, radius, WORLD.width - radius);
   let collidedX = false;
   for (const wall of walls) {
-    if (circleRectCollides(nextX, tank.y, tank.radius, wall)) {
+    if (circleRectCollides(nextX, tank.y, radius, wall)) {
       collidedX = true;
       break;
     }
@@ -981,10 +1123,10 @@ function resolveTankMovement(tank, moveX, moveY, speed, dt) {
   }
 
   let nextY = tank.y + moveY * speed * dt;
-  nextY = clamp(nextY, tank.radius, WORLD.height - tank.radius);
+  nextY = clamp(nextY, radius, WORLD.height - radius);
   let collidedY = false;
   for (const wall of walls) {
-    if (circleRectCollides(tank.x, nextY, tank.radius, wall)) {
+    if (circleRectCollides(tank.x, nextY, radius, wall)) {
       collidedY = true;
       break;
     }
@@ -1002,12 +1144,13 @@ function resolveTankMovement(tank, moveX, moveY, speed, dt) {
 
 function nudgeTank(tank, dx, dy) {
   if (!tank.alive) return;
-  const walls = getCurrentWalls();
+  const walls = getArenaObstacles();
+  const radius = getTankRadius(tank);
 
-  let nextX = clamp(tank.x + dx, tank.radius, WORLD.width - tank.radius);
+  let nextX = clamp(tank.x + dx, radius, WORLD.width - radius);
   let collidedX = false;
   for (const wall of walls) {
-    if (circleRectCollides(nextX, tank.y, tank.radius, wall)) {
+    if (circleRectCollides(nextX, tank.y, radius, wall)) {
       collidedX = true;
       break;
     }
@@ -1016,10 +1159,10 @@ function nudgeTank(tank, dx, dy) {
     tank.x = nextX;
   }
 
-  let nextY = clamp(tank.y + dy, tank.radius, WORLD.height - tank.radius);
+  let nextY = clamp(tank.y + dy, radius, WORLD.height - radius);
   let collidedY = false;
   for (const wall of walls) {
-    if (circleRectCollides(tank.x, nextY, tank.radius, wall)) {
+    if (circleRectCollides(tank.x, nextY, radius, wall)) {
       collidedY = true;
       break;
     }
@@ -1042,7 +1185,7 @@ function separateOverlappingTanks(iterations = 1) {
         const dx = tankB.x - tankA.x;
         const dy = tankB.y - tankA.y;
         const distSq = dx * dx + dy * dy;
-        const minDist = tankA.radius + tankB.radius + 4;
+        const minDist = getTankRadius(tankA) + getTankRadius(tankB) + 4;
         if (distSq >= minDist * minDist) continue;
 
         const dist = Math.max(0.001, Math.sqrt(distSq));
@@ -1061,7 +1204,8 @@ function separateOverlappingTanks(iterations = 1) {
 }
 
 function spawnBullet(owner) {
-  const muzzleDistance = owner.radius + 18;
+  const radiusScale = getBulletScale(owner);
+  const muzzleDistance = getTankRadius(owner) + 18;
   const angle = owner.turretAngle;
   state.bullets.push({
     id: bulletIdCounter++,
@@ -1073,7 +1217,8 @@ function spawnBullet(owner) {
     vy: Math.sin(angle) * BULLET_SPEED,
     angle,
     life: BULLET_LIFETIME,
-    radius: 6,
+    radius: 6 * radiusScale,
+    damage: BULLET_DAMAGE * (owner.mushroomTimer > 0 ? 1.2 : 1),
     color: owner.bulletColor,
   });
   owner.fireCooldown = owner.rapidFireTimer > 0 ? RAPID_FIRE_COOLDOWN : BASE_FIRE_COOLDOWN;
@@ -1122,8 +1267,11 @@ function respawnTank(tank) {
   tank.respawnTimer = 0;
   tank.fireCooldown = 0.35;
   tank.rapidFireTimer = 0;
+  tank.starTimer = 0;
+  tank.mushroomTimer = 0;
   tank.shield = false;
   tank.flashTimer = 0.18;
+  if (tank.controlled) stopStarLoop();
 }
 
 function tryApplyDamage(target, attacker, damage) {
@@ -1144,6 +1292,85 @@ function tryApplyDamage(target, attacker, damage) {
     killTank(target, attacker);
   }
   return true;
+}
+
+function spawnShell(x, y, velocity) {
+  const angle = Math.random() * Math.PI * 2;
+  const vx = velocity?.vx ?? Math.cos(angle) * SHELL_SPEED;
+  const vy = velocity?.vy ?? Math.sin(angle) * SHELL_SPEED;
+  state.hazards.push({
+    type: "shell",
+    x,
+    y,
+    radius: 18,
+    vx,
+    vy,
+    life: SHELL_LIFETIME,
+    touchCooldown: 0,
+  });
+  showMessage("Shell loose in the arena.", 1.2);
+}
+
+function spawnSpecialItem(type, x, y) {
+  state.specialItems.push({
+    id: pickupIdCounter++,
+    type,
+    x,
+    y,
+    radius: type === "mushroom" ? 24 : 20,
+    life: 14,
+  });
+  showMessage(type === "star" ? "A star dropped." : "A mushroom dropped.", 1.2);
+}
+
+function breakNeutralTank() {
+  if (!state.neutralTank || !state.neutralTank.alive) return;
+  state.neutralTank.alive = false;
+  addBurst(state.neutralTank.x, state.neutralTank.y, "#f5d9a2", 56, 0.32);
+  const roll = Math.random();
+  if (roll < 0.34) {
+    spawnShell(state.neutralTank.x, state.neutralTank.y);
+  } else if (roll < 0.67) {
+    spawnSpecialItem("star", state.neutralTank.x, state.neutralTank.y);
+  } else {
+    spawnSpecialItem("mushroom", state.neutralTank.x, state.neutralTank.y);
+  }
+}
+
+function applySpecialItem(tank, item) {
+  if (item.type === "star") {
+    tank.starTimer = STAR_DURATION;
+    tank.flashTimer = 0.22;
+    addFlash(tank.x, tank.y, "#fff69f", 54, 0.24);
+    showMessage(`${tank.label} grabs a star rush.`, 1.2);
+    if (tank.controlled) startStarLoop();
+  } else if (item.type === "mushroom") {
+    tank.mushroomTimer = MUSHROOM_DURATION;
+    tank.flashTimer = 0.22;
+    addFlash(tank.x, tank.y, "#ff665f", 54, 0.24);
+    showMessage(`${tank.label} grows huge ammo.`, 1.2);
+  }
+}
+
+function collectSpecialItems(tank) {
+  if (!tank.alive) return;
+  state.specialItems = state.specialItems.filter((item) => {
+    const dx = tank.x - item.x;
+    const dy = tank.y - item.y;
+    const hitDistance = getTankRadius(tank) + item.radius;
+    if (dx * dx + dy * dy <= hitDistance * hitDistance) {
+      applySpecialItem(tank, item);
+      return false;
+    }
+    return true;
+  });
+}
+
+function updateSpecialItemTimers(dt) {
+  state.specialItems = state.specialItems.filter((item) => {
+    item.life -= dt;
+    return item.life > 0;
+  });
 }
 
 function maybeSpawnPickup(dt) {
@@ -1222,9 +1449,68 @@ function updateParticles(dt) {
   });
 }
 
+function updateHazards(dt) {
+  const obstacles = getArenaObstacles();
+  state.hazards = state.hazards.filter((hazard) => {
+    hazard.life -= dt;
+    hazard.touchCooldown = Math.max(0, hazard.touchCooldown - dt);
+    if (hazard.life <= 0) return false;
+
+    let nextX = hazard.x + hazard.vx * dt;
+    let nextY = hazard.y + hazard.vy * dt;
+
+    if (nextX < hazard.radius || nextX > WORLD.width - hazard.radius) {
+      hazard.vx *= -1;
+      nextX = clamp(nextX, hazard.radius, WORLD.width - hazard.radius);
+    }
+    if (nextY < hazard.radius || nextY > WORLD.height - hazard.radius) {
+      hazard.vy *= -1;
+      nextY = clamp(nextY, hazard.radius, WORLD.height - hazard.radius);
+    }
+
+    let bouncedX = false;
+    let bouncedY = false;
+    for (const obstacle of obstacles) {
+      if (circleRectCollides(nextX, hazard.y, hazard.radius, obstacle)) bouncedX = true;
+      if (circleRectCollides(hazard.x, nextY, hazard.radius, obstacle)) bouncedY = true;
+    }
+    if (bouncedX) {
+      hazard.vx *= -1;
+      nextX = hazard.x;
+    }
+    if (bouncedY) {
+      hazard.vy *= -1;
+      nextY = hazard.y;
+    }
+
+    hazard.x = nextX;
+    hazard.y = nextY;
+
+    if (hazard.touchCooldown <= 0) {
+      for (const target of state.tanks) {
+        if (!target.alive) continue;
+        const dx = hazard.x - target.x;
+        const dy = hazard.y - target.y;
+        const hitDistance = hazard.radius + getTankRadius(target);
+        if (dx * dx + dy * dy <= hitDistance * hitDistance) {
+          const opponents = getOpposingTanks(target.teamId);
+          const attacker = opponents.find((tank) => tank.alive) || null;
+          tryApplyDamage(target, attacker, SHELL_DAMAGE);
+          hazard.touchCooldown = 0.45;
+          const angle = Math.atan2(dy || 1, dx || 1);
+          hazard.vx = Math.cos(angle) * SHELL_SPEED;
+          hazard.vy = Math.sin(angle) * SHELL_SPEED;
+          break;
+        }
+      }
+    }
+    return true;
+  });
+}
+
 function updateBullets(dt) {
   const nextBullets = [];
-  const walls = getCurrentWalls();
+  const walls = getArenaObstacles();
   for (const bullet of state.bullets) {
     bullet.x += bullet.vx * dt;
     bullet.y += bullet.vy * dt;
@@ -1255,13 +1541,25 @@ function updateBullets(dt) {
     }
     if (destroyed) continue;
 
+    if (state.neutralTank && state.neutralTank.alive) {
+      const rect = getNeutralTankRect();
+      if (rect && circleRectCollides(bullet.x, bullet.y, bullet.radius, rect)) {
+        state.neutralTank.hp = Math.max(0, state.neutralTank.hp - bullet.damage);
+        addFlash(bullet.x, bullet.y, "#f6d9ae", 24, 0.16);
+        if (state.neutralTank.hp <= 0) {
+          breakNeutralTank();
+        }
+        continue;
+      }
+    }
+
     let target = null;
     let targetDistSq = Infinity;
     for (const tank of state.tanks) {
       if (!tank.alive || tank.teamId === bullet.teamId) continue;
       const dx = bullet.x - tank.x;
       const dy = bullet.y - tank.y;
-      const hitDistance = tank.radius + bullet.radius;
+      const hitDistance = getTankRadius(tank) + bullet.radius;
       const distSq = dx * dx + dy * dy;
       if (distSq <= hitDistance * hitDistance && distSq < targetDistSq) {
         target = tank;
@@ -1272,7 +1570,7 @@ function updateBullets(dt) {
     if (target) {
       const attacker = getTankById(bullet.ownerId);
       if (attacker) {
-        tryApplyDamage(target, attacker, BULLET_DAMAGE);
+        tryApplyDamage(target, attacker, bullet.damage);
       }
       destroyed = true;
     }
@@ -1289,7 +1587,10 @@ function updateBullets(dt) {
 function updateTankStatus(tank, dt) {
   if (tank.fireCooldown > 0) tank.fireCooldown = Math.max(0, tank.fireCooldown - dt);
   if (tank.rapidFireTimer > 0) tank.rapidFireTimer = Math.max(0, tank.rapidFireTimer - dt);
+  if (tank.starTimer > 0) tank.starTimer = Math.max(0, tank.starTimer - dt);
+  if (tank.mushroomTimer > 0) tank.mushroomTimer = Math.max(0, tank.mushroomTimer - dt);
   if (tank.flashTimer > 0) tank.flashTimer = Math.max(0, tank.flashTimer - dt);
+  if (tank.controlled && tank.starTimer <= 0) stopStarLoop();
   if (!tank.alive) {
     tank.respawnTimer -= dt;
     if (tank.respawnTimer <= 0 && state.mode === "playing") {
@@ -1316,7 +1617,7 @@ function updatePlayer(dt) {
   }
 
   tank.turretAngle = Math.atan2(input.mouseY - tank.y, input.mouseX - tank.x);
-  resolveTankMovement(tank, moveX, moveY, tank.speed, dt);
+  resolveTankMovement(tank, moveX, moveY, getTankSpeed(tank.speed, tank), dt);
 
   if (input.fire && tank.fireCooldown <= 0) {
     spawnBullet(tank);
@@ -1325,10 +1626,11 @@ function updatePlayer(dt) {
   if (state.pickup) {
     const dx = tank.x - state.pickup.x;
     const dy = tank.y - state.pickup.y;
-    if (dx * dx + dy * dy <= (tank.radius + state.pickup.radius) ** 2) {
+    if (dx * dx + dy * dy <= (getTankRadius(tank) + state.pickup.radius) ** 2) {
       applyPickup(tank, state.pickup);
     }
   }
+  collectSpecialItems(tank);
 }
 
 function shouldBotChasePickup(tank, pickup) {
@@ -1393,6 +1695,13 @@ function updateBot(tank, dt) {
   let moveTargetY = target.y;
   let desiredDistance = 340;
 
+  const specialTarget = state.specialItems[0];
+  if (specialTarget) {
+    moveTargetX = specialTarget.x;
+    moveTargetY = specialTarget.y;
+    desiredDistance = 18;
+  }
+
   if (state.pickup && shouldBotChasePickup(tank, state.pickup)) {
     moveTargetX = state.pickup.x;
     moveTargetY = state.pickup.y;
@@ -1434,8 +1743,8 @@ function updateBot(tank, dt) {
   const probeX = tank.x + moveX * 36;
   const probeY = tank.y + moveY * 36;
   let blocked = false;
-  for (const wall of getCurrentWalls()) {
-    if (circleRectCollides(probeX, probeY, tank.radius, wall)) {
+  for (const wall of getArenaObstacles()) {
+    if (circleRectCollides(probeX, probeY, getTankRadius(tank), wall)) {
       blocked = true;
       break;
     }
@@ -1447,15 +1756,16 @@ function updateBot(tank, dt) {
     moveY = swapY;
   }
 
-  resolveTankMovement(tank, moveX, moveY, tank.speed, dt);
+  resolveTankMovement(tank, moveX, moveY, getTankSpeed(tank.speed, tank), dt);
 
   if (state.pickup) {
     const dx = tank.x - state.pickup.x;
     const dy = tank.y - state.pickup.y;
-    if (dx * dx + dy * dy <= (tank.radius + state.pickup.radius) ** 2) {
+    if (dx * dx + dy * dy <= (getTankRadius(tank) + state.pickup.radius) ** 2) {
       applyPickup(tank, state.pickup);
     }
   }
+  collectSpecialItems(tank);
 
   const hasSight = !lineBlocked(tank.x, tank.y, target.x, target.y);
   const angleError = Math.abs(angleDiff(tank.turretAngle, aimAngle));
@@ -1491,6 +1801,8 @@ function updateGameplay(dt) {
   }
   separateOverlappingTanks(2);
   updateBullets(dt);
+  updateHazards(dt);
+  updateSpecialItemTimers(dt);
   maybeSpawnPickup(dt);
 }
 
@@ -1712,9 +2024,110 @@ function drawPickup(pickup) {
   ctx.restore();
 }
 
+function drawNeutralTank() {
+  if (!state.neutralTank || !state.neutralTank.alive) return;
+  const tank = state.neutralTank;
+  const map = getCurrentMap();
+  ctx.save();
+  ctx.translate(tank.x, tank.y);
+  const bodyGradient = ctx.createLinearGradient(-tank.w / 2, -tank.h / 2, tank.w / 2, tank.h / 2);
+  bodyGradient.addColorStop(0, map.palette.wallTop);
+  bodyGradient.addColorStop(1, map.palette.wallBottom);
+  ctx.fillStyle = bodyGradient;
+  ctx.strokeStyle = map.palette.wallStroke;
+  ctx.lineWidth = 3;
+  roundRect(ctx, -tank.w / 2, -tank.h / 2, tank.w, tank.h, 14);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "rgba(255,255,255,0.08)";
+  roundRect(ctx, -18, -18, 36, 36, 10);
+  ctx.fill();
+  ctx.fillStyle = map.palette.wallStroke;
+  roundRect(ctx, -8, -10, 40, 20, 10);
+  ctx.fill();
+  ctx.fillStyle = "#182f39";
+  ctx.beginPath();
+  ctx.arc(0, 0, 16, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.fillStyle = "rgba(7, 19, 29, 0.64)";
+  roundRect(ctx, tank.x - 44, tank.y - 54, 88, 10, 5);
+  ctx.fill();
+  ctx.fillStyle = "#f0c27b";
+  roundRect(ctx, tank.x - 44, tank.y - 54, 88 * (tank.hp / tank.maxHp), 10, 5);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSpecialItems() {
+  for (const item of state.specialItems) {
+    ctx.save();
+    ctx.translate(item.x, item.y);
+    if (item.type === "star") {
+      ctx.fillStyle = "#fff06a";
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (let i = 0; i < 5; i += 1) {
+        const outer = -Math.PI / 2 + (i * Math.PI * 2) / 5;
+        const inner = outer + Math.PI / 5;
+        const outerR = item.radius;
+        const innerR = item.radius * 0.45;
+        if (i === 0) ctx.moveTo(Math.cos(outer) * outerR, Math.sin(outer) * outerR);
+        ctx.lineTo(Math.cos(inner) * innerR, Math.sin(inner) * innerR);
+        ctx.lineTo(Math.cos(outer + (Math.PI * 2) / 5) * outerR, Math.sin(outer + (Math.PI * 2) / 5) * outerR);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillStyle = "#ff6b63";
+      ctx.strokeStyle = "rgba(255,255,255,0.55)";
+      ctx.lineWidth = 3;
+      roundRect(ctx, -item.radius * 0.8, -4, item.radius * 1.6, item.radius * 0.95, 12);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ffe6db";
+      ctx.beginPath();
+      ctx.arc(0, -item.radius * 0.18, item.radius * 0.82, Math.PI, 0, false);
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(-7, -8, 4, 0, Math.PI * 2);
+      ctx.arc(7, -10, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
+function drawHazards() {
+  for (const hazard of state.hazards) {
+    ctx.save();
+    ctx.translate(hazard.x, hazard.y);
+    ctx.rotate(Math.atan2(hazard.vy, hazard.vx));
+    ctx.fillStyle = "#6adf67";
+    ctx.strokeStyle = "#efffe2";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, hazard.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#e8f6d1";
+    roundRect(ctx, -hazard.radius * 0.55, -hazard.radius * 0.2, hazard.radius * 1.1, hazard.radius * 0.4, 5);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
 function drawTank(tank) {
   const bodyScale = tank.alive ? 1 : 0.85;
   const flash = tank.flashTimer > 0 ? 0.45 + Math.sin(state.time * 40) * 0.2 : 0;
+  const tankScale = getTankScale(tank) * bodyScale;
+  const bodyColor = tank.starTimer > 0 ? getRainbowColor(tank.controlled ? 0 : 180) : tank.color;
+  const accentColor = tank.starTimer > 0 ? getRainbowColor(tank.controlled ? 120 : 300) : tank.accent;
   ctx.save();
   ctx.translate(tank.x, tank.y);
 
@@ -1722,7 +2135,7 @@ function drawTank(tank) {
     ctx.strokeStyle = "rgba(255, 232, 177, 0.75)";
     ctx.lineWidth = 3;
     ctx.beginPath();
-    ctx.arc(0, 0, tank.radius + 14, 0, Math.PI * 2);
+    ctx.arc(0, 0, getTankRadius(tank) + 14, 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -1730,14 +2143,14 @@ function drawTank(tank) {
     ctx.strokeStyle = "rgba(126, 242, 255, 0.88)";
     ctx.lineWidth = 5;
     ctx.beginPath();
-    ctx.arc(0, 0, tank.radius + 9 + Math.sin(state.time * 5) * 1.5, 0, Math.PI * 2);
+    ctx.arc(0, 0, getTankRadius(tank) + 9 + Math.sin(state.time * 5) * 1.5, 0, Math.PI * 2);
     ctx.stroke();
   }
 
   ctx.rotate(tank.bodyAngle);
-  ctx.scale(bodyScale, bodyScale);
-  ctx.fillStyle = tank.alive ? tank.color : "rgba(128, 144, 158, 0.46)";
-  ctx.strokeStyle = tank.accent;
+  ctx.scale(tankScale, tankScale);
+  ctx.fillStyle = tank.alive ? bodyColor : "rgba(128, 144, 158, 0.46)";
+  ctx.strokeStyle = accentColor;
   ctx.lineWidth = 3;
   roundRect(ctx, -32, -24, 64, 48, 14);
   ctx.fill();
@@ -1751,7 +2164,8 @@ function drawTank(tank) {
   ctx.save();
   ctx.translate(tank.x, tank.y);
   ctx.rotate(tank.turretAngle);
-  ctx.fillStyle = tank.accent;
+  ctx.scale(getTankScale(tank), getTankScale(tank));
+  ctx.fillStyle = accentColor;
   roundRect(ctx, -10, -10, 44, 20, 10);
   ctx.fill();
   ctx.fillStyle = "#182f39";
@@ -1764,7 +2178,7 @@ function drawTank(tank) {
   ctx.fillStyle = "rgba(7, 19, 29, 0.64)";
   roundRect(ctx, tank.x - 44, tank.y - 52, 88, 10, 5);
   ctx.fill();
-  ctx.fillStyle = tank.color;
+  ctx.fillStyle = tank.starTimer > 0 ? getRainbowColor(tank.controlled ? 40 : 220) : tank.color;
   roundRect(ctx, tank.x - 44, tank.y - 52, 88 * (tank.hp / MAX_HP), 10, 5);
   ctx.fill();
   ctx.fillStyle = "#f2f8fb";
@@ -1780,7 +2194,7 @@ function drawBullets() {
     ctx.translate(bullet.x, bullet.y);
     ctx.rotate(bullet.angle);
     ctx.fillStyle = bullet.color;
-    roundRect(ctx, -8, -4, 16, 8, 4);
+    roundRect(ctx, -bullet.radius * 1.25, -bullet.radius * 0.55, bullet.radius * 2.5, bullet.radius * 1.1, bullet.radius * 0.55);
     ctx.fill();
     ctx.restore();
   }
@@ -1909,6 +2323,8 @@ function drawHud() {
     ? [
         player.shield ? "Shield" : null,
         player.rapidFireTimer > 0 ? `Heavy Shell ${player.rapidFireTimer.toFixed(1)}s` : null,
+        player.starTimer > 0 ? `Star ${player.starTimer.toFixed(1)}s` : null,
+        player.mushroomTimer > 0 ? `Mushroom ${player.mushroomTimer.toFixed(1)}s` : null,
         player.alive ? `HP ${Math.round(player.hp)} / ${MAX_HP}` : `Respawn ${player.respawnTimer.toFixed(1)}s`,
       ]
         .filter(Boolean)
@@ -2060,7 +2476,10 @@ function render() {
   }
 
   drawArena();
+  drawNeutralTank();
   drawPickup(state.pickup);
+  drawSpecialItems();
+  drawHazards();
   drawBullets();
   const orderedTanks = [...state.tanks].sort(
     (tankA, tankB) => Number(tankA.alive) - Number(tankB.alive) || Number(tankA.controlled) - Number(tankB.controlled)
@@ -2183,12 +2602,15 @@ function summarizeTank(tank) {
     controlled: tank.controlled,
     x: Number(tank.x.toFixed(1)),
     y: Number(tank.y.toFixed(1)),
+    currentRadius: Number(getTankRadius(tank).toFixed(1)),
     bodyAngle: Number(tank.bodyAngle.toFixed(3)),
     turretAngle: Number(tank.turretAngle.toFixed(3)),
     hp: Number(tank.hp.toFixed(1)),
     alive: tank.alive,
     shield: tank.shield,
     rapidFireTimer: Number(tank.rapidFireTimer.toFixed(2)),
+    starTimer: Number(tank.starTimer.toFixed(2)),
+    mushroomTimer: Number(tank.mushroomTimer.toFixed(2)),
     score: tank.score,
     deaths: tank.deaths,
     respawnTimer: Number(tank.respawnTimer.toFixed(2)),
@@ -2238,6 +2660,7 @@ function renderGameToText() {
       x: Number(bullet.x.toFixed(1)),
       y: Number(bullet.y.toFixed(1)),
       angle: Number(bullet.angle.toFixed(3)),
+      radius: Number(bullet.radius.toFixed(1)),
     })),
     pickup: state.pickup
       ? {
@@ -2247,6 +2670,27 @@ function renderGameToText() {
           y: state.pickup.y,
         }
       : null,
+    neutralTank:
+      state.neutralTank && state.neutralTank.alive
+        ? {
+            x: state.neutralTank.x,
+            y: state.neutralTank.y,
+            hp: state.neutralTank.hp,
+          }
+        : null,
+    specialItems: state.specialItems.map((item) => ({
+      type: item.type,
+      x: item.x,
+      y: item.y,
+      life: Number(item.life.toFixed(2)),
+    })),
+    hazards: state.hazards.map((hazard) => ({
+      type: hazard.type,
+      x: Number(hazard.x.toFixed(1)),
+      y: Number(hazard.y.toFixed(1)),
+      vx: Number(hazard.vx.toFixed(1)),
+      vy: Number(hazard.vy.toFixed(1)),
+    })),
     walls: getCurrentWalls().map((wall) => ({ x: wall.x, y: wall.y, w: wall.w, h: wall.h })),
     buttons: state.buttons.map((button) => ({
       id: button.id,
@@ -2287,6 +2731,10 @@ window.__gameDebug = {
     if (!tank) return;
     Object.assign(tank, patch);
   },
+  setNeutralTank(patch) {
+    if (!state.neutralTank) return;
+    Object.assign(state.neutralTank, patch);
+  },
   setTeamScore(teamId, score) {
     if (!state.teams[teamId]) return;
     state.teams[teamId].score = Math.max(0, Math.round(score));
@@ -2300,16 +2748,36 @@ window.__gameDebug = {
       radius: PICKUP_RADIUS,
     };
   },
+  forceSpecialItem(type, x, y) {
+    if (type === "shell") {
+      spawnShell(x, y);
+      return;
+    }
+    spawnSpecialItem(type, x, y);
+  },
   getResolvedPickupPoints() {
     return collectResolvedPickupPoints();
   },
   clearBullets() {
     state.bullets = [];
   },
+  clearHazards() {
+    state.hazards = [];
+  },
+  forceShell(x, y, vx, vy) {
+    spawnShell(x, y, { vx, vy });
+  },
   fire(id) {
     const tank = resolveTankIdentifier(id);
     if (tank && tank.alive) {
       spawnBullet(tank);
+    }
+  },
+  damage(id, amount, attackerId) {
+    const target = resolveTankIdentifier(id);
+    const attacker = resolveTankIdentifier(attackerId);
+    if (target) {
+      tryApplyDamage(target, attacker || null, amount);
     }
   },
 };
