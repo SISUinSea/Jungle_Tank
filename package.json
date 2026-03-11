@@ -1,0 +1,13 @@
+{
+  "name": "topviewattack",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Top-view tank duel against a bot.",
+  "scripts": {
+    "start": "node scripts/static-server.js",
+    "verify": "node scripts/verify-game.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.2"
+  }
+}

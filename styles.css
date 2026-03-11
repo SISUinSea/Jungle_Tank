@@ -1,0 +1,52 @@
+:root {
+  color-scheme: dark;
+  --bg-0: #07131d;
+  --bg-1: #102538;
+  --panel: rgba(7, 19, 29, 0.86);
+  --frame: rgba(169, 216, 255, 0.22);
+  --text: #edf7ff;
+  --muted: #98b5c7;
+  --accent: #ffb84d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top, rgba(45, 120, 170, 0.25), transparent 30%),
+    linear-gradient(180deg, var(--bg-1), var(--bg-0));
+  color: var(--text);
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+
+body {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.app-shell {
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+#game {
+  width: min(96vw, calc(96vh * 16 / 9));
+  height: auto;
+  max-height: 94vh;
+  border: 1px solid var(--frame);
+  border-radius: 22px;
+  box-shadow:
+    0 24px 100px rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  background: #09151d;
+  display: block;
+}
