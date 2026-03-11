@@ -111,6 +111,40 @@ async function main() {
     return window.__gameDebug.getState();
   });
 
+  const pickupSpawnState = await page.evaluate(async () => {
+    const tankRadius = 28;
+    const world = { width: 1600, height: 900 };
+    const circleRectCollides = (x, y, radius, rect) => {
+      const nearestX = Math.max(rect.x, Math.min(x, rect.x + rect.w));
+      const nearestY = Math.max(rect.y, Math.min(y, rect.y + rect.h));
+      const dx = x - nearestX;
+      const dy = y - nearestY;
+      return dx * dx + dy * dy < radius * radius;
+    };
+
+    const results = [];
+    for (let mapIndex = 0; mapIndex < 5; mapIndex += 1) {
+      window.__gameDebug.setMap(mapIndex);
+      window.__gameDebug.startGame();
+      await window.advanceTime(100);
+      const state = window.__gameDebug.getState();
+      const points = window.__gameDebug.getResolvedPickupPoints().map((point) => ({
+        ...point,
+        blocked:
+          point.x < tankRadius ||
+          point.x > world.width - tankRadius ||
+          point.y < tankRadius ||
+          point.y > world.height - tankRadius ||
+          state.walls.some((wall) => circleRectCollides(point.x, point.y, tankRadius, wall)),
+      }));
+      results.push({
+        map: state.map.name,
+        points,
+      });
+    }
+    return results;
+  });
+
   const assertions = [
     {
       name: "initial mode is menu",
@@ -187,6 +221,13 @@ async function main() {
       name: "selected map exposes its terrain layout",
       pass: mapState.walls.length === 7,
       actual: mapState.walls.length,
+    },
+    {
+      name: "pickup spawn points stay on walkable ground for every map",
+      pass: pickupSpawnState.every(
+        (entry) => entry.points.length > 0 && entry.points.every((point) => point.blocked === false),
+      ),
+      actual: pickupSpawnState,
     },
   ];
 

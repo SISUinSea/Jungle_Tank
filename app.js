@@ -18,6 +18,9 @@ const BASE_FIRE_COOLDOWN = 0.42;
 const RAPID_FIRE_COOLDOWN = 0.18;
 const RESPAWN_TIME = 2.15;
 const PICKUP_RESPAWN = 7.8;
+const PICKUP_RADIUS = 22;
+const PICKUP_SEARCH_STEP = 32;
+const PICKUP_SEARCH_MAX_RINGS = 10;
 
 const TEAM_META = {
   blue: {
@@ -278,6 +281,96 @@ function getCurrentWalls() {
 
 function getCurrentPickupPoints() {
   return getCurrentMap().pickupPoints;
+}
+
+function isTankPlacementFree(x, y) {
+  if (x < TANK_RADIUS || x > WORLD.width - TANK_RADIUS) return false;
+  if (y < TANK_RADIUS || y > WORLD.height - TANK_RADIUS) return false;
+  for (const wall of getCurrentWalls()) {
+    if (circleRectCollides(x, y, TANK_RADIUS, wall)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function resolvePickupAnchor(anchor) {
+  if (isTankPlacementFree(anchor.x, anchor.y)) {
+    return { x: anchor.x, y: anchor.y };
+  }
+
+  for (let ring = 1; ring <= PICKUP_SEARCH_MAX_RINGS; ring += 1) {
+    let best = null;
+    let bestDistanceSq = Infinity;
+
+    for (let dx = -ring; dx <= ring; dx += 1) {
+      for (let dy = -ring; dy <= ring; dy += 1) {
+        if (Math.abs(dx) !== ring && Math.abs(dy) !== ring) continue;
+
+        const candidateX = anchor.x + dx * PICKUP_SEARCH_STEP;
+        const candidateY = anchor.y + dy * PICKUP_SEARCH_STEP;
+        if (!isTankPlacementFree(candidateX, candidateY)) continue;
+
+        const distanceSq = dx * dx + dy * dy;
+        if (distanceSq < bestDistanceSq) {
+          best = { x: candidateX, y: candidateY };
+          bestDistanceSq = distanceSq;
+        }
+      }
+    }
+
+    if (best) {
+      return best;
+    }
+  }
+
+  return null;
+}
+
+function findFallbackPickupPoint() {
+  for (let y = TANK_RADIUS; y <= WORLD.height - TANK_RADIUS; y += PICKUP_SEARCH_STEP) {
+    for (let x = TANK_RADIUS; x <= WORLD.width - TANK_RADIUS; x += PICKUP_SEARCH_STEP) {
+      if (isTankPlacementFree(x, y)) {
+        return { x, y };
+      }
+    }
+  }
+  return null;
+}
+
+function collectResolvedPickupPoints() {
+  const resolvedPoints = [];
+  const seen = new Set();
+
+  for (const point of getCurrentPickupPoints()) {
+    const resolved = resolvePickupAnchor(point);
+    if (!resolved) continue;
+
+    const key = `${resolved.x}:${resolved.y}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    resolvedPoints.push({
+      anchorX: point.x,
+      anchorY: point.y,
+      x: resolved.x,
+      y: resolved.y,
+    });
+  }
+
+  if (resolvedPoints.length > 0) {
+    return resolvedPoints;
+  }
+
+  const fallback = findFallbackPickupPoint();
+  if (!fallback) return [];
+  return [
+    {
+      anchorX: fallback.x,
+      anchorY: fallback.y,
+      x: fallback.x,
+      y: fallback.y,
+    },
+  ];
 }
 
 function setMapIndex(index) {
@@ -752,7 +845,11 @@ function maybeSpawnPickup(dt) {
   state.pickupTimer -= dt;
   if (state.pickupTimer > 0) return;
 
-  const pickupPoints = getCurrentPickupPoints();
+  const pickupPoints = collectResolvedPickupPoints();
+  if (pickupPoints.length === 0) {
+    state.pickupTimer = PICKUP_RESPAWN;
+    return;
+  }
   const point = pickupPoints[Math.floor(Math.random() * pickupPoints.length)];
   const type = PICKUP_TYPES[Math.floor(Math.random() * PICKUP_TYPES.length)];
   state.pickup = {
@@ -760,7 +857,7 @@ function maybeSpawnPickup(dt) {
     type,
     x: point.x,
     y: point.y,
-    radius: 22,
+    radius: PICKUP_RADIUS,
   };
 }
 
@@ -1890,8 +1987,11 @@ window.__gameDebug = {
       type,
       x,
       y,
-      radius: 22,
+      radius: PICKUP_RADIUS,
     };
+  },
+  getResolvedPickupPoints() {
+    return collectResolvedPickupPoints();
   },
   clearBullets() {
     state.bullets = [];
