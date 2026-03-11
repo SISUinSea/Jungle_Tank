@@ -40,24 +40,193 @@ const TEAM_META = {
   },
 };
 
-const WALLS = [
-  { x: 545, y: 180, w: 130, h: 180 },
-  { x: 545, y: 540, w: 130, h: 180 },
-  { x: 925, y: 180, w: 130, h: 180 },
-  { x: 925, y: 540, w: 130, h: 180 },
-  { x: 735, y: 340, w: 130, h: 220 },
-  { x: 260, y: 160, w: 120, h: 48 },
-  { x: 260, y: 692, w: 120, h: 48 },
-  { x: 1220, y: 160, w: 120, h: 48 },
-  { x: 1220, y: 692, w: 120, h: 48 },
-];
-
-const PICKUP_POINTS = [
-  { x: 800, y: 140 },
-  { x: 800, y: 760 },
-  { x: 800, y: 450 },
-  { x: 450, y: 450 },
-  { x: 1150, y: 450 },
+const MAPS = [
+  {
+    id: "iron-cross",
+    name: "Iron Cross",
+    description: "대칭 중앙 요새와 긴 복도.",
+    decor: "grid",
+    palette: {
+      skyTop: "#183448",
+      skyBottom: "#0b1821",
+      grid: "rgba(217, 245, 255, 0.12)",
+      border: "rgba(140, 204, 255, 0.22)",
+      wallTop: "#294457",
+      wallBottom: "#172b37",
+      wallStroke: "rgba(234, 249, 255, 0.1)",
+      decorA: "rgba(119, 214, 255, 0.08)",
+      decorB: "rgba(255, 209, 102, 0.06)",
+    },
+    spawns: {
+      player: { x: 210, y: WORLD.height / 2, angle: 0 },
+      bot: { x: WORLD.width - 210, y: WORLD.height / 2, angle: Math.PI },
+    },
+    walls: [
+      { x: 545, y: 180, w: 130, h: 180 },
+      { x: 545, y: 540, w: 130, h: 180 },
+      { x: 925, y: 180, w: 130, h: 180 },
+      { x: 925, y: 540, w: 130, h: 180 },
+      { x: 735, y: 340, w: 130, h: 220 },
+      { x: 260, y: 160, w: 120, h: 48 },
+      { x: 260, y: 692, w: 120, h: 48 },
+      { x: 1220, y: 160, w: 120, h: 48 },
+      { x: 1220, y: 692, w: 120, h: 48 },
+    ],
+    pickupPoints: [
+      { x: 800, y: 140 },
+      { x: 800, y: 760 },
+      { x: 800, y: 450 },
+      { x: 450, y: 450 },
+      { x: 1150, y: 450 },
+    ],
+  },
+  {
+    id: "sandstorm",
+    name: "Sandstorm Basin",
+    description: "사구와 암석으로 끊긴 사막 분지.",
+    decor: "dunes",
+    palette: {
+      skyTop: "#6f4c2c",
+      skyBottom: "#2b1b13",
+      grid: "rgba(255, 236, 184, 0.1)",
+      border: "rgba(255, 206, 129, 0.25)",
+      wallTop: "#8a6140",
+      wallBottom: "#563827",
+      wallStroke: "rgba(255, 243, 218, 0.1)",
+      decorA: "rgba(255, 196, 96, 0.09)",
+      decorB: "rgba(255, 241, 177, 0.06)",
+    },
+    spawns: {
+      player: { x: 180, y: 220, angle: 0.18 },
+      bot: { x: WORLD.width - 180, y: WORLD.height - 220, angle: Math.PI - 0.18 },
+    },
+    walls: [
+      { x: 300, y: 180, w: 160, h: 90 },
+      { x: 520, y: 420, w: 140, h: 260 },
+      { x: 760, y: 120, w: 90, h: 220 },
+      { x: 760, y: 560, w: 90, h: 220 },
+      { x: 1010, y: 220, w: 170, h: 90 },
+      { x: 1120, y: 500, w: 190, h: 120 },
+      { x: 650, y: 390, w: 300, h: 120 },
+    ],
+    pickupPoints: [
+      { x: 255, y: 690 },
+      { x: 800, y: 450 },
+      { x: 1330, y: 230 },
+      { x: 540, y: 130 },
+      { x: 1080, y: 760 },
+    ],
+  },
+  {
+    id: "glacier-run",
+    name: "Glacier Run",
+    description: "얼음 수로와 열린 저격 라인.",
+    decor: "cracks",
+    palette: {
+      skyTop: "#6aa7c8",
+      skyBottom: "#102331",
+      grid: "rgba(239, 250, 255, 0.12)",
+      border: "rgba(200, 239, 255, 0.28)",
+      wallTop: "#7fb8d6",
+      wallBottom: "#33536a",
+      wallStroke: "rgba(255, 255, 255, 0.12)",
+      decorA: "rgba(217, 245, 255, 0.12)",
+      decorB: "rgba(126, 242, 255, 0.06)",
+    },
+    spawns: {
+      player: { x: 170, y: WORLD.height / 2, angle: 0 },
+      bot: { x: WORLD.width - 170, y: WORLD.height / 2, angle: Math.PI },
+    },
+    walls: [
+      { x: 360, y: 128, w: 105, h: 640 },
+      { x: 1135, y: 128, w: 105, h: 640 },
+      { x: 610, y: 110, w: 380, h: 92 },
+      { x: 610, y: 698, w: 380, h: 92 },
+      { x: 710, y: 300, w: 180, h: 120 },
+      { x: 710, y: 480, w: 180, h: 120 },
+    ],
+    pickupPoints: [
+      { x: 530, y: 450 },
+      { x: 1070, y: 450 },
+      { x: 800, y: 250 },
+      { x: 800, y: 650 },
+      { x: 800, y: 450 },
+    ],
+  },
+  {
+    id: "neon-dock",
+    name: "Neon Dockyard",
+    description: "컨테이너 통로가 교차하는 야간 부두.",
+    decor: "stripes",
+    palette: {
+      skyTop: "#13203d",
+      skyBottom: "#081018",
+      grid: "rgba(123, 255, 209, 0.09)",
+      border: "rgba(93, 235, 188, 0.25)",
+      wallTop: "#254867",
+      wallBottom: "#102336",
+      wallStroke: "rgba(182, 255, 234, 0.12)",
+      decorA: "rgba(50, 224, 196, 0.08)",
+      decorB: "rgba(255, 82, 119, 0.07)",
+    },
+    spawns: {
+      player: { x: 220, y: 730, angle: -0.32 },
+      bot: { x: WORLD.width - 220, y: 170, angle: Math.PI - 0.32 },
+    },
+    walls: [
+      { x: 250, y: 420, w: 320, h: 88 },
+      { x: 1030, y: 392, w: 320, h: 88 },
+      { x: 650, y: 150, w: 100, h: 220 },
+      { x: 850, y: 530, w: 100, h: 220 },
+      { x: 620, y: 390, w: 360, h: 110 },
+      { x: 450, y: 150, w: 110, h: 150 },
+      { x: 1040, y: 600, w: 110, h: 150 },
+    ],
+    pickupPoints: [
+      { x: 220, y: 200 },
+      { x: 800, y: 120 },
+      { x: 800, y: 780 },
+      { x: 1380, y: 700 },
+      { x: 800, y: 450 },
+    ],
+  },
+  {
+    id: "emerald-rift",
+    name: "Emerald Rift",
+    description: "초록 협곡과 단절된 중앙 교차로.",
+    decor: "rings",
+    palette: {
+      skyTop: "#274032",
+      skyBottom: "#0c1812",
+      grid: "rgba(196, 255, 206, 0.08)",
+      border: "rgba(142, 224, 160, 0.24)",
+      wallTop: "#3e6c4f",
+      wallBottom: "#1d3628",
+      wallStroke: "rgba(226, 255, 234, 0.1)",
+      decorA: "rgba(140, 255, 180, 0.09)",
+      decorB: "rgba(255, 214, 112, 0.05)",
+    },
+    spawns: {
+      player: { x: 200, y: 170, angle: 0.48 },
+      bot: { x: WORLD.width - 200, y: WORLD.height - 170, angle: Math.PI + 0.48 },
+    },
+    walls: [
+      { x: 330, y: 150, w: 120, h: 220 },
+      { x: 330, y: 520, w: 120, h: 220 },
+      { x: 1150, y: 150, w: 120, h: 220 },
+      { x: 1150, y: 520, w: 120, h: 220 },
+      { x: 610, y: 240, w: 120, h: 420 },
+      { x: 870, y: 240, w: 120, h: 420 },
+      { x: 730, y: 390, w: 140, h: 120 },
+    ],
+    pickupPoints: [
+      { x: 210, y: 450 },
+      { x: 800, y: 180 },
+      { x: 800, y: 720 },
+      { x: 1390, y: 450 },
+      { x: 800, y: 450 },
+    ],
+  },
 ];
 
 const PICKUP_TYPES = ["heal", "rapid", "shield"];
@@ -74,6 +243,7 @@ const input = {
 
 const state = {
   mode: "menu",
+  mapIndex: 0,
   time: 0,
   round: 1,
   config: { ...DEFAULT_CONFIG },
@@ -98,6 +268,38 @@ let pickupIdCounter = 1;
 let lastFrameTime = performance.now();
 let rafId = 0;
 
+function getCurrentMap() {
+  return MAPS[state.mapIndex] || MAPS[0];
+}
+
+function getCurrentWalls() {
+  return getCurrentMap().walls;
+}
+
+function getCurrentPickupPoints() {
+  return getCurrentMap().pickupPoints;
+}
+
+function setMapIndex(index) {
+  state.mapIndex = (index + MAPS.length) % MAPS.length;
+}
+
+function setInputIdle() {
+  input.up = false;
+  input.down = false;
+  input.left = false;
+  input.right = false;
+  input.fire = false;
+}
+
+function togglePause() {
+  if (state.mode === "playing") {
+    state.mode = "paused";
+    setInputIdle();
+  } else if (state.mode === "paused") {
+    state.mode = "playing";
+  }
+}
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -152,25 +354,29 @@ function createTeams(config) {
 }
 
 function buildSpawnSlots(side, count) {
-  const topPadding = 120;
-  const usableHeight = WORLD.height - topPadding * 2;
+  const anchor = side === "left" ? getCurrentMap().spawns.player : getCurrentMap().spawns.bot;
   const direction = side === "left" ? 1 : -1;
-  const baseX = side === "left" ? 190 : WORLD.width - 190;
-  const angle = side === "left" ? 0 : Math.PI;
+  const slots = [
+    {
+      x: clamp(anchor.x, TANK_RADIUS, WORLD.width - TANK_RADIUS),
+      y: clamp(anchor.y, TANK_RADIUS, WORLD.height - TANK_RADIUS),
+      angle: anchor.angle,
+    },
+  ];
 
-  return Array.from({ length: count }, (_, index) => {
-    const y =
-      count === 1
-        ? WORLD.height / 2
-        : topPadding + (usableHeight * (index + 1)) / (count + 1);
-    const columnOffset = (index % 2) * 54;
-    const depthOffset = Math.floor(index / 2) * 14;
-    return {
-      x: baseX + direction * (columnOffset + depthOffset),
-      y,
-      angle,
-    };
-  });
+  for (let index = 1; index < count; index += 1) {
+    const ring = Math.ceil(index / 2);
+    const verticalSign = index % 2 === 1 ? -1 : 1;
+    const yOffset = ring * 92 * verticalSign;
+    const xOffset = 52 + (ring - 1) * 18;
+    slots.push({
+      x: clamp(anchor.x + direction * xOffset, TANK_RADIUS, WORLD.width - TANK_RADIUS),
+      y: clamp(anchor.y + yOffset, TANK_RADIUS, WORLD.height - TANK_RADIUS),
+      angle: anchor.angle,
+    });
+  }
+
+  return slots;
 }
 
 function createBotBrain() {
@@ -293,6 +499,7 @@ function updateConfig(patch) {
 function resetMatch() {
   const config = { ...state.config };
   const matchState = buildMatchState(config);
+  setInputIdle();
   state.mode = "playing";
   state.time = 0;
   state.round = 1;
@@ -301,7 +508,7 @@ function resetMatch() {
   state.tanks = matchState.tanks;
   state.botBrains = matchState.botBrains;
   state.localPlayerId = matchState.localPlayerId;
-  state.message = `${config.friendlyCount} vs ${config.enemyCount}. First to ${state.scoreTarget} team kills wins.`;
+  state.message = `${getCurrentMap().name} · ${config.friendlyCount} vs ${config.enemyCount}. First to ${state.scoreTarget} team kills wins.`;
   state.messageTimer = 2.6;
   state.buttons = [];
   state.hoveredButton = null;
@@ -313,6 +520,7 @@ function resetMatch() {
 }
 
 function restartToMenu() {
+  setInputIdle();
   state.mode = "menu";
   state.time = 0;
   state.round = 1;
@@ -347,11 +555,12 @@ function circleRectCollides(x, y, radius, rect) {
 function lineBlocked(x1, y1, x2, y2) {
   const distance = Math.hypot(x2 - x1, y2 - y1);
   const steps = Math.max(1, Math.ceil(distance / 18));
+  const walls = getCurrentWalls();
   for (let index = 0; index <= steps; index += 1) {
     const t = index / steps;
     const px = lerp(x1, x2, t);
     const py = lerp(y1, y2, t);
-    for (const wall of WALLS) {
+    for (const wall of walls) {
       if (px >= wall.x && px <= wall.x + wall.w && py >= wall.y && py <= wall.y + wall.h) {
         return true;
       }
@@ -362,11 +571,11 @@ function lineBlocked(x1, y1, x2, y2) {
 
 function resolveTankMovement(tank, moveX, moveY, speed, dt) {
   if (!tank.alive) return;
-
+  const walls = getCurrentWalls();
   let nextX = tank.x + moveX * speed * dt;
   nextX = clamp(nextX, tank.radius, WORLD.width - tank.radius);
   let collidedX = false;
-  for (const wall of WALLS) {
+  for (const wall of walls) {
     if (circleRectCollides(nextX, tank.y, tank.radius, wall)) {
       collidedX = true;
       break;
@@ -379,7 +588,7 @@ function resolveTankMovement(tank, moveX, moveY, speed, dt) {
   let nextY = tank.y + moveY * speed * dt;
   nextY = clamp(nextY, tank.radius, WORLD.height - tank.radius);
   let collidedY = false;
-  for (const wall of WALLS) {
+  for (const wall of walls) {
     if (circleRectCollides(tank.x, nextY, tank.radius, wall)) {
       collidedY = true;
       break;
@@ -398,10 +607,11 @@ function resolveTankMovement(tank, moveX, moveY, speed, dt) {
 
 function nudgeTank(tank, dx, dy) {
   if (!tank.alive) return;
+  const walls = getCurrentWalls();
 
   let nextX = clamp(tank.x + dx, tank.radius, WORLD.width - tank.radius);
   let collidedX = false;
-  for (const wall of WALLS) {
+  for (const wall of walls) {
     if (circleRectCollides(nextX, tank.y, tank.radius, wall)) {
       collidedX = true;
       break;
@@ -413,7 +623,7 @@ function nudgeTank(tank, dx, dy) {
 
   let nextY = clamp(tank.y + dy, tank.radius, WORLD.height - tank.radius);
   let collidedY = false;
-  for (const wall of WALLS) {
+  for (const wall of walls) {
     if (circleRectCollides(tank.x, nextY, tank.radius, wall)) {
       collidedY = true;
       break;
@@ -542,7 +752,8 @@ function maybeSpawnPickup(dt) {
   state.pickupTimer -= dt;
   if (state.pickupTimer > 0) return;
 
-  const point = PICKUP_POINTS[Math.floor(Math.random() * PICKUP_POINTS.length)];
+  const pickupPoints = getCurrentPickupPoints();
+  const point = pickupPoints[Math.floor(Math.random() * pickupPoints.length)];
   const type = PICKUP_TYPES[Math.floor(Math.random() * PICKUP_TYPES.length)];
   state.pickup = {
     id: pickupIdCounter++,
@@ -609,6 +820,7 @@ function updateParticles(dt) {
 
 function updateBullets(dt) {
   const nextBullets = [];
+  const walls = getCurrentWalls();
   for (const bullet of state.bullets) {
     bullet.x += bullet.vx * dt;
     bullet.y += bullet.vy * dt;
@@ -625,7 +837,7 @@ function updateBullets(dt) {
     }
 
     let destroyed = false;
-    for (const wall of WALLS) {
+    for (const wall of walls) {
       if (
         bullet.x >= wall.x &&
         bullet.x <= wall.x + wall.w &&
@@ -818,7 +1030,7 @@ function updateBot(tank, dt) {
   const probeX = tank.x + moveX * 36;
   const probeY = tank.y + moveY * 36;
   let blocked = false;
-  for (const wall of WALLS) {
+  for (const wall of getCurrentWalls()) {
     if (circleRectCollides(probeX, probeY, tank.radius, wall)) {
       blocked = true;
       break;
@@ -856,10 +1068,15 @@ function updateBot(tank, dt) {
 }
 
 function updateGameplay(dt) {
-  if (!state.tanks.length || state.mode !== "playing") return;
-
   for (const tank of state.tanks) {
     updateTankStatus(tank, dt);
+  }
+
+  if (!state.tanks.length) return;
+  if (state.mode === "paused") return;
+  if (state.mode !== "playing") {
+    updateBullets(dt);
+    return;
   }
 
   updatePlayer(dt);
@@ -916,6 +1133,20 @@ function handleButtonPress(id) {
     restartToMenu();
     return;
   }
+  if (id === "pause" || id === "resume") {
+    togglePause();
+    return;
+  }
+  if (id === "prev-map") {
+    setMapIndex(state.mapIndex - 1);
+    restartToMenu();
+    return;
+  }
+  if (id === "next-map") {
+    setMapIndex(state.mapIndex + 1);
+    restartToMenu();
+    return;
+  }
   if (id === "dec-friendly") {
     updateConfig({ friendlyCount: state.config.friendlyCount - 1 });
     return;
@@ -969,15 +1200,57 @@ function drawButton(button, label, options = {}) {
 }
 
 function drawArena() {
+  const map = getCurrentMap();
   const gradient = ctx.createLinearGradient(0, 0, 0, WORLD.height);
-  gradient.addColorStop(0, "#132b39");
-  gradient.addColorStop(1, "#0b1821");
+  gradient.addColorStop(0, map.palette.skyTop);
+  gradient.addColorStop(1, map.palette.skyBottom);
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, WORLD.width, WORLD.height);
 
+  if (map.decor === "dunes") {
+    ctx.save();
+    for (let i = 0; i < 5; i += 1) {
+      ctx.fillStyle = i % 2 === 0 ? map.palette.decorA : map.palette.decorB;
+      ctx.beginPath();
+      ctx.ellipse(220 + i * 310, 160 + (i % 2) * 250, 280, 110, -0.28, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  } else if (map.decor === "cracks") {
+    ctx.save();
+    ctx.strokeStyle = map.palette.decorA;
+    ctx.lineWidth = 5;
+    for (let x = 180; x < WORLD.width; x += 260) {
+      ctx.beginPath();
+      ctx.moveTo(x, 90);
+      ctx.lineTo(x + 38, 220);
+      ctx.lineTo(x - 14, 360);
+      ctx.lineTo(x + 42, 520);
+      ctx.lineTo(x, 760);
+      ctx.stroke();
+    }
+    ctx.restore();
+  } else if (map.decor === "stripes") {
+    ctx.save();
+    for (let x = -120; x < WORLD.width + 140; x += 180) {
+      ctx.fillStyle = x % 360 === 0 ? map.palette.decorA : map.palette.decorB;
+      ctx.fillRect(x, 0, 90, WORLD.height);
+    }
+    ctx.restore();
+  } else if (map.decor === "rings") {
+    ctx.save();
+    ctx.strokeStyle = map.palette.decorA;
+    ctx.lineWidth = 20;
+    ctx.beginPath();
+    ctx.arc(260, 220, 110, 0, Math.PI * 2);
+    ctx.arc(1340, 680, 120, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   ctx.save();
   ctx.globalAlpha = 0.12;
-  ctx.strokeStyle = "#d9f5ff";
+  ctx.strokeStyle = map.palette.grid;
   ctx.lineWidth = 1;
   for (let x = 0; x <= WORLD.width; x += 80) {
     ctx.beginPath();
@@ -993,17 +1266,17 @@ function drawArena() {
   }
   ctx.restore();
 
-  ctx.strokeStyle = "rgba(140, 204, 255, 0.22)";
+  ctx.strokeStyle = map.palette.border;
   ctx.lineWidth = 4;
   ctx.strokeRect(16, 16, WORLD.width - 32, WORLD.height - 32);
 
-  for (const wall of WALLS) {
+  for (const wall of map.walls) {
     const wallGradient = ctx.createLinearGradient(wall.x, wall.y, wall.x, wall.y + wall.h);
-    wallGradient.addColorStop(0, "#294457");
-    wallGradient.addColorStop(1, "#172b37");
+    wallGradient.addColorStop(0, map.palette.wallTop);
+    wallGradient.addColorStop(1, map.palette.wallBottom);
     ctx.fillStyle = wallGradient;
     ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
-    ctx.strokeStyle = "rgba(234, 249, 255, 0.1)";
+    ctx.strokeStyle = map.palette.wallStroke;
     ctx.lineWidth = 2;
     ctx.strokeRect(wall.x + 1, wall.y + 1, wall.w - 2, wall.h - 2);
   }
@@ -1167,14 +1440,39 @@ function drawMenuSelector(x, y, title, subtitle, count, decId, incId, tint) {
   drawButton(incButton, "+", { fontSize: 44, radius: 16 });
 }
 
+function drawMapSelector(x, y, map) {
+  drawHudPanel(x, y, 860, 160);
+
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#edf7ff";
+  ctx.font = "700 28px Trebuchet MS";
+  ctx.fillText(`Map ${state.mapIndex + 1} / ${MAPS.length}  ${map.name}`, x + 430, y + 42);
+
+  ctx.fillStyle = "#ffecb8";
+  ctx.font = "500 22px Trebuchet MS";
+  ctx.fillText(map.description, x + 430, y + 76);
+
+  ctx.fillStyle = "#98b5c7";
+  ctx.font = "500 20px Trebuchet MS";
+  ctx.fillText("Choose a battlefield, then set your team sizes.", x + 430, y + 114);
+  ctx.fillText("Move: WASD / Arrows   Shoot: Mouse / Space   Pause: P / Esc", x + 430, y + 140);
+
+  const prevButton = { id: "prev-map", x: x + 28, y: y + 54, w: 72, h: 52 };
+  const nextButton = { id: "next-map", x: x + 760, y: y + 54, w: 72, h: 52 };
+  state.buttons.push(prevButton, nextButton);
+  drawButton(prevButton, "←", { fontSize: 34, radius: 16 });
+  drawButton(nextButton, "→", { fontSize: 34, radius: 16 });
+}
+
 function drawHud() {
+  const map = getCurrentMap();
   const player = getLocalPlayer();
   const blueAlive = getAliveTeamCount("blue");
   const redAlive = getAliveTeamCount("red");
 
-  drawHudPanel(22, 20, 350, 110);
-  drawHudPanel(WORLD.width - 372, 20, 350, 110);
-  drawHudPanel(500, 20, 600, 110);
+  drawHudPanel(22, 20, 350, 118);
+  drawHudPanel(WORLD.width - 372, 20, 350, 118);
+  drawHudPanel(460, 20, 680, 118);
 
   ctx.textAlign = "left";
   ctx.fillStyle = "#edf7ff";
@@ -1197,7 +1495,10 @@ function drawHud() {
   ctx.textAlign = "center";
   ctx.fillStyle = "#edf7ff";
   ctx.font = "700 24px Trebuchet MS";
-  ctx.fillText(`Match ${state.config.friendlyCount} vs ${state.config.enemyCount}   Round ${state.round}`, WORLD.width / 2, 52);
+  ctx.fillText(`Match ${state.config.friendlyCount} vs ${state.config.enemyCount}   Round ${state.round}`, WORLD.width / 2, 48);
+  ctx.font = "600 18px Trebuchet MS";
+  ctx.fillStyle = "#98b5c7";
+  ctx.fillText(`Map ${state.mapIndex + 1}/${MAPS.length}  ${map.name}`, WORLD.width / 2, 74);
 
   const powerups = player
     ? [
@@ -1209,10 +1510,8 @@ function drawHud() {
         .join("  |  ")
     : "Lead the blue team.";
 
-  ctx.font = "600 18px Trebuchet MS";
-  ctx.fillStyle = "#98b5c7";
-  ctx.fillText(powerups || "No active powerup", WORLD.width / 2, 84);
-  ctx.fillText("Move: WASD / Arrows   Shoot: Mouse / Space   F: Fullscreen", WORLD.width / 2, 108);
+  ctx.fillText(powerups || "No active powerup", WORLD.width / 2, 98);
+  ctx.fillText("Move: WASD / Arrows   Shoot: Mouse / Space   F: Fullscreen", WORLD.width / 2, 118);
 
   if (state.message) {
     drawHudPanel(WORLD.width / 2 - 260, WORLD.height - 98, 520, 58);
@@ -1220,9 +1519,24 @@ function drawHud() {
     ctx.font = "700 24px Trebuchet MS";
     ctx.fillText(state.message, WORLD.width / 2, WORLD.height - 60);
   }
+
+  if (player && !player.alive) {
+    const text = `${player.label} respawns in ${player.respawnTimer.toFixed(1)}s`;
+    drawHudPanel(WORLD.width / 2 - 170, 132, 340, 50);
+    ctx.fillStyle = "#edf7ff";
+    ctx.font = "700 20px Trebuchet MS";
+    ctx.fillText(text, WORLD.width / 2, 164);
+  }
+
+  if (state.mode === "playing" || state.mode === "paused") {
+    const pauseButton = { id: "pause", x: WORLD.width - 164, y: WORLD.height - 88, w: 136, h: 50 };
+    state.buttons.push(pauseButton);
+    drawButton(pauseButton, state.mode === "paused" ? "Paused" : "Pause");
+  }
 }
 
 function drawMenu() {
+  const map = getCurrentMap();
   drawArena();
   drawParticles();
 
@@ -1238,34 +1552,44 @@ function drawMenu() {
 
   ctx.fillStyle = "#ffb84d";
   ctx.font = "600 28px Trebuchet MS";
-  ctx.fillText("Scale the arena to any N vs M team fight and lead the blue squad.", WORLD.width / 2, 252);
+  ctx.fillText("Choose a map, set N vs M, and lead the blue squad.", WORLD.width / 2, 252);
 
-  drawHudPanel(WORLD.width / 2 - 520, 300, 1040, 290);
-  ctx.fillStyle = "#edf7ff";
-  ctx.font = "600 26px Trebuchet MS";
-  ctx.fillText("Team Setup", WORLD.width / 2, 350);
-
-  drawMenuSelector(WORLD.width / 2 - 450, 372, "Blue Team", "includes you + ally bots", state.config.friendlyCount, "dec-friendly", "inc-friendly", "#79d6ff");
-  drawMenuSelector(WORLD.width / 2 + 150, 372, "Red Team", "enemy bot squad", state.config.enemyCount, "dec-enemy", "inc-enemy", "#ff876c");
+  drawMapSelector(WORLD.width / 2 - 430, 296, map);
+  drawMenuSelector(
+    WORLD.width / 2 - 450,
+    498,
+    "Blue Team",
+    "includes you + ally bots",
+    state.config.friendlyCount,
+    "dec-friendly",
+    "inc-friendly",
+    "#79d6ff"
+  );
+  drawMenuSelector(
+    WORLD.width / 2 + 150,
+    498,
+    "Red Team",
+    "enemy bot squad",
+    state.config.enemyCount,
+    "dec-enemy",
+    "inc-enemy",
+    "#ff876c"
+  );
 
   ctx.fillStyle = "#98b5c7";
   ctx.font = "500 21px Trebuchet MS";
   ctx.fillText(
     `Current matchup ${state.config.friendlyCount} vs ${state.config.enemyCount}   |   First to ${state.scoreTarget} team kills`,
     WORLD.width / 2,
-    622
+    744
   );
 
-  const startButton = { id: "start", x: WORLD.width / 2 - 180, y: 666, w: 360, h: 76 };
+  const startButton = { id: "start", x: WORLD.width / 2 - 180, y: 772, w: 360, h: 72 };
   state.buttons.push(startButton);
   drawButton(startButton, `Start ${state.config.friendlyCount} vs ${state.config.enemyCount}`, {
     fontSize: 30,
     radius: 20,
   });
-
-  ctx.fillStyle = "#98b5c7";
-  ctx.font = "500 18px Trebuchet MS";
-  ctx.fillText("Press Enter to begin", WORLD.width / 2, 792);
 }
 
 function drawFinishedOverlay() {
@@ -1297,6 +1621,30 @@ function drawFinishedOverlay() {
   drawButton(menuButton, "Back to Menu", { fontSize: 26, radius: 18 });
 }
 
+function drawPauseOverlay() {
+  ctx.save();
+  ctx.fillStyle = "rgba(5, 12, 18, 0.68)";
+  ctx.fillRect(0, 0, WORLD.width, WORLD.height);
+  ctx.restore();
+
+  drawHudPanel(WORLD.width / 2 - 280, 190, 560, 410);
+  ctx.fillStyle = "#edf7ff";
+  ctx.font = "700 54px Trebuchet MS";
+  ctx.textAlign = "center";
+  ctx.fillText("PAUSED", WORLD.width / 2, 270);
+  ctx.fillStyle = "#98b5c7";
+  ctx.font = "500 24px Trebuchet MS";
+  ctx.fillText(`Current map: ${getCurrentMap().name}`, WORLD.width / 2, 320);
+
+  const menuButton = { id: "menu", x: WORLD.width / 2 - 170, y: 366, w: 340, h: 64 };
+  const resumeButton = { id: "resume", x: WORLD.width / 2 - 170, y: 448, w: 340, h: 64 };
+  const restartButton = { id: "restart", x: WORLD.width / 2 - 170, y: 530, w: 340, h: 64 };
+  state.buttons = [menuButton, resumeButton, restartButton];
+  drawButton(menuButton, "Back To Lobby");
+  drawButton(resumeButton, "Resume");
+  drawButton(restartButton, "Restart");
+}
+
 function render() {
   ctx.clearRect(0, 0, WORLD.width, WORLD.height);
   state.buttons = [];
@@ -1318,7 +1666,9 @@ function render() {
   drawParticles();
   drawHud();
 
-  if (state.mode === "finished") {
+  if (state.mode === "paused") {
+    drawPauseOverlay();
+  } else if (state.mode === "finished") {
     drawFinishedOverlay();
   }
 }
@@ -1345,7 +1695,11 @@ function handleKey(event, isDown) {
     key === " " ||
     key === "spacebar" ||
     key === "enter" ||
-    key === "f"
+    key === "f" ||
+    key === "q" ||
+    key === "e" ||
+    key === "escape" ||
+    key === "p"
   ) {
     event.preventDefault();
   }
@@ -1360,6 +1714,14 @@ function handleKey(event, isDown) {
 
   if (key === "enter" && (state.mode === "menu" || state.mode === "finished")) {
     startGame();
+  } else if ((key === "escape" || key === "p") && (state.mode === "playing" || state.mode === "paused")) {
+    togglePause();
+  } else if (key === "q" && state.mode === "menu") {
+    setMapIndex(state.mapIndex - 1);
+    restartToMenu();
+  } else if (key === "e" && state.mode === "menu") {
+    setMapIndex(state.mapIndex + 1);
+    restartToMenu();
   } else if (key === "escape" && document.fullscreenElement) {
     document.exitFullscreen();
   } else if (key === "f") {
@@ -1434,6 +1796,11 @@ function renderGameToText() {
     message: state.message,
     config: { ...state.config },
     localPlayerId: state.localPlayerId,
+    map: {
+      index: state.mapIndex,
+      id: getCurrentMap().id,
+      name: getCurrentMap().name,
+    },
     coordinateSystem: {
       origin: "top-left",
       xPositive: "right",
@@ -1473,7 +1840,7 @@ function renderGameToText() {
           y: state.pickup.y,
         }
       : null,
-    walls: WALLS.map((wall) => ({ x: wall.x, y: wall.y, w: wall.w, h: wall.h })),
+    walls: getCurrentWalls().map((wall) => ({ x: wall.x, y: wall.y, w: wall.w, h: wall.h })),
     buttons: state.buttons.map((button) => ({
       id: button.id,
       x: button.x,
@@ -1502,6 +1869,11 @@ window.__gameDebug = {
   getState: () => JSON.parse(renderGameToText()),
   getTankIds(teamId) {
     return (teamId ? getTeamTanks(teamId) : state.tanks).map((tank) => tank.id);
+  },
+  togglePause,
+  setMap(index) {
+    setMapIndex(index);
+    restartToMenu();
   },
   setTank(id, patch) {
     const tank = resolveTankIdentifier(id);

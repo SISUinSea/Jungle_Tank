@@ -5,8 +5,10 @@ async function main() {
   fs.mkdirSync("output", { recursive: true });
   const browser = await chromium.launch({ headless: false });
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } });
+  const baseUrl = `http://127.0.0.1:${process.env.PORT || 4173}`;
 
-  await page.goto("http://127.0.0.1:4173", { waitUntil: "domcontentloaded" });
+  await page.goto(baseUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => Boolean(window.__gameDebug && window.advanceTime), null, { timeout: 5000 });
   const menuState = await page.evaluate(() => window.__gameDebug.getState());
 
   const teamState = await page.evaluate(async () => {
@@ -102,6 +104,13 @@ async function main() {
     return window.__gameDebug.getState();
   });
 
+  const mapState = await page.evaluate(async () => {
+    window.__gameDebug.setMap(4);
+    window.__gameDebug.startGame();
+    await window.advanceTime(100);
+    return window.__gameDebug.getState();
+  });
+
   const assertions = [
     {
       name: "initial mode is menu",
@@ -160,6 +169,24 @@ async function main() {
         blueTeamScore: finishState.teams.blue.score,
         message: finishState.message,
       },
+    },
+    {
+      name: "map selector swaps to Emerald Rift",
+      pass:
+        mapState.mode === "playing" &&
+        mapState.map.name === "Emerald Rift" &&
+        mapState.player.x === 200 &&
+        mapState.player.y === 170,
+      actual: {
+        mode: mapState.mode,
+        map: mapState.map,
+        player: mapState.player,
+      },
+    },
+    {
+      name: "selected map exposes its terrain layout",
+      pass: mapState.walls.length === 7,
+      actual: mapState.walls.length,
     },
   ];
 
