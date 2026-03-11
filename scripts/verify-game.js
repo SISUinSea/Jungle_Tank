@@ -113,6 +113,8 @@ async function main() {
 
   const pickupSpawnState = await page.evaluate(async () => {
     const tankRadius = 28;
+    const gridStep = 32;
+    const probeStep = 16;
     const world = { width: 1600, height: 900 };
     const circleRectCollides = (x, y, radius, rect) => {
       const nearestX = Math.max(rect.x, Math.min(x, rect.x + rect.w));
@@ -121,6 +123,124 @@ async function main() {
       const dy = y - nearestY;
       return dx * dx + dy * dy < radius * radius;
     };
+    const isPlacementFree = (x, y, walls) =>
+      !(
+        x < tankRadius ||
+        x > world.width - tankRadius ||
+        y < tankRadius ||
+        y > world.height - tankRadius ||
+        walls.some((wall) => circleRectCollides(x, y, tankRadius, wall))
+      );
+    const canTraverse = (x1, y1, x2, y2, walls) => {
+      const distance = Math.hypot(x2 - x1, y2 - y1);
+      const steps = Math.max(1, Math.ceil(distance / probeStep));
+      for (let index = 0; index <= steps; index += 1) {
+        const t = index / steps;
+        const x = x1 + (x2 - x1) * t;
+        const y = y1 + (y2 - y1) * t;
+        if (!isPlacementFree(x, y, walls)) return false;
+      }
+      return true;
+    };
+    const metrics = {
+      columns: Math.floor((world.width - tankRadius * 2) / gridStep) + 1,
+      rows: Math.floor((world.height - tankRadius * 2) / gridStep) + 1,
+    };
+    const getCenter = (column, row) => ({
+      x: tankRadius + column * gridStep,
+      y: tankRadius + row * gridStep,
+    });
+    const clampIndex = (value, max) => Math.max(0, Math.min(max, value));
+    const getColumn = (x) => clampIndex(Math.round((x - tankRadius) / gridStep), metrics.columns - 1);
+    const getRow = (y) => clampIndex(Math.round((y - tankRadius) / gridStep), metrics.rows - 1);
+    const buildReachableGrid = (state) => {
+      const walkable = Array.from({ length: metrics.rows }, () => Array(metrics.columns).fill(false));
+      const reachable = Array.from({ length: metrics.rows }, () => Array(metrics.columns).fill(false));
+      for (let row = 0; row < metrics.rows; row += 1) {
+        for (let column = 0; column < metrics.columns; column += 1) {
+          const center = getCenter(column, row);
+          walkable[row][column] = isPlacementFree(center.x, center.y, state.walls);
+        }
+      }
+
+      const queue = [];
+      let queueIndex = 0;
+      const enqueue = (column, row) => {
+        if (!walkable[row]?.[column] || reachable[row][column]) return;
+        reachable[row][column] = true;
+        queue.push({ column, row });
+      };
+
+      for (const tank of state.tanks) {
+        const baseColumn = getColumn(tank.x);
+        const baseRow = getRow(tank.y);
+        for (let ring = 0; ring <= 10; ring += 1) {
+          let seeded = false;
+          for (let dColumn = -ring; dColumn <= ring; dColumn += 1) {
+            for (let dRow = -ring; dRow <= ring; dRow += 1) {
+              if (Math.abs(dColumn) !== ring && Math.abs(dRow) !== ring) continue;
+              const column = clampIndex(baseColumn + dColumn, metrics.columns - 1);
+              const row = clampIndex(baseRow + dRow, metrics.rows - 1);
+              if (!walkable[row][column]) continue;
+              const center = getCenter(column, row);
+              if (!canTraverse(tank.x, tank.y, center.x, center.y, state.walls)) continue;
+              enqueue(column, row);
+              seeded = true;
+            }
+          }
+          if (seeded) break;
+        }
+      }
+
+      const neighbors = [
+        { column: 1, row: 0 },
+        { column: -1, row: 0 },
+        { column: 0, row: 1 },
+        { column: 0, row: -1 },
+      ];
+      while (queueIndex < queue.length) {
+        const current = queue[queueIndex];
+        queueIndex += 1;
+        const currentCenter = getCenter(current.column, current.row);
+        for (const neighbor of neighbors) {
+          const column = current.column + neighbor.column;
+          const row = current.row + neighbor.row;
+          if (
+            column < 0 ||
+            column >= metrics.columns ||
+            row < 0 ||
+            row >= metrics.rows ||
+            !walkable[row][column] ||
+            reachable[row][column]
+          ) {
+            continue;
+          }
+          const center = getCenter(column, row);
+          if (!canTraverse(currentCenter.x, currentCenter.y, center.x, center.y, state.walls)) continue;
+          enqueue(column, row);
+        }
+      }
+
+      return reachable;
+    };
+    const isPointReachable = (x, y, walls, reachable) => {
+      if (!isPlacementFree(x, y, walls)) return false;
+      const baseColumn = getColumn(x);
+      const baseRow = getRow(y);
+      for (let ring = 0; ring <= 2; ring += 1) {
+        for (let dColumn = -ring; dColumn <= ring; dColumn += 1) {
+          for (let dRow = -ring; dRow <= ring; dRow += 1) {
+            if (Math.abs(dColumn) !== ring && Math.abs(dRow) !== ring) continue;
+            const column = clampIndex(baseColumn + dColumn, metrics.columns - 1);
+            const row = clampIndex(baseRow + dRow, metrics.rows - 1);
+            if (!reachable[row][column]) continue;
+            const center = getCenter(column, row);
+            if (canTraverse(center.x, center.y, x, y, walls)) return true;
+          }
+        }
+      }
+      return false;
+    };
 
     const results = [];
     for (let mapIndex = 0; mapIndex < 5; mapIndex += 1) {
@@ -128,14 +248,12 @@ async function main() {
       window.__gameDebug.startGame();
       await window.advanceTime(100);
       const state = window.__gameDebug.getState();
+      const reachable = buildReachableGrid(state);
       const points = window.__gameDebug.getResolvedPickupPoints().map((point) => ({
         ...point,
         blocked:
-          point.x < tankRadius ||
-          point.x > world.width - tankRadius ||
-          point.y < tankRadius ||
-          point.y > world.height - tankRadius ||
-          state.walls.some((wall) => circleRectCollides(point.x, point.y, tankRadius, wall)),
+          !isPlacementFree(point.x, point.y, state.walls),
+        reachable: isPointReachable(point.x, point.y, state.walls, reachable),
       }));
       results.push({
         map: state.map.name,
@@ -225,7 +343,9 @@ async function main() {
     {
       name: "pickup spawn points stay on walkable ground for every map",
       pass: pickupSpawnState.every(
-        (entry) => entry.points.length > 0 && entry.points.every((point) => point.blocked === false),
+        (entry) =>
+          entry.points.length > 0 &&
+          entry.points.every((point) => point.blocked === false && point.reachable === true),
       ),
       actual: pickupSpawnState,
     },

@@ -21,6 +21,7 @@ const PICKUP_RESPAWN = 7.8;
 const PICKUP_RADIUS = 22;
 const PICKUP_SEARCH_STEP = 32;
 const PICKUP_SEARCH_MAX_RINGS = 10;
+const PICKUP_ACCESS_PROBE_STEP = 16;
 
 const TEAM_META = {
   blue: {
@@ -294,8 +295,202 @@ function isTankPlacementFree(x, y) {
   return true;
 }
 
-function resolvePickupAnchor(anchor) {
-  if (isTankPlacementFree(anchor.x, anchor.y)) {
+function canTankTraverseBetween(x1, y1, x2, y2) {
+  const distance = Math.hypot(x2 - x1, y2 - y1);
+  const steps = Math.max(1, Math.ceil(distance / PICKUP_ACCESS_PROBE_STEP));
+  for (let index = 0; index <= steps; index += 1) {
+    const t = index / steps;
+    const px = lerp(x1, x2, t);
+    const py = lerp(y1, y2, t);
+    if (!isTankPlacementFree(px, py)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getPickupReachabilityOrigins() {
+  const origins = [];
+  const seen = new Set();
+
+  const pushOrigin = (x, y) => {
+    if (!isTankPlacementFree(x, y)) return;
+    const key = `${Math.round(x)}:${Math.round(y)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    origins.push({ x, y });
+  };
+
+  for (const tank of state.tanks) {
+    if (tank.alive) {
+      pushOrigin(tank.x, tank.y);
+    } else if (tank.spawn) {
+      pushOrigin(tank.spawn.x, tank.spawn.y);
+    }
+  }
+
+  if (origins.length > 0) {
+    return origins;
+  }
+
+  const map = getCurrentMap();
+  pushOrigin(map.spawns.player.x, map.spawns.player.y);
+  pushOrigin(map.spawns.bot.x, map.spawns.bot.y);
+  return origins;
+}
+
+function getPickupGridMetrics() {
+  return {
+    columns: Math.floor((WORLD.width - TANK_RADIUS * 2) / PICKUP_SEARCH_STEP) + 1,
+    rows: Math.floor((WORLD.height - TANK_RADIUS * 2) / PICKUP_SEARCH_STEP) + 1,
+  };
+}
+
+function getPickupGridCenter(column, row) {
+  return {
+    x: TANK_RADIUS + column * PICKUP_SEARCH_STEP,
+    y: TANK_RADIUS + row * PICKUP_SEARCH_STEP,
+  };
+}
+
+function clampPickupGridColumn(column, metrics) {
+  return clamp(column, 0, metrics.columns - 1);
+}
+
+function clampPickupGridRow(row, metrics) {
+  return clamp(row, 0, metrics.rows - 1);
+}
+
+function getPickupGridColumnForX(x, metrics) {
+  return clampPickupGridColumn(Math.round((x - TANK_RADIUS) / PICKUP_SEARCH_STEP), metrics);
+}
+
+function getPickupGridRowForY(y, metrics) {
+  return clampPickupGridRow(Math.round((y - TANK_RADIUS) / PICKUP_SEARCH_STEP), metrics);
+}
+
+function buildPickupReachabilityMap() {
+  const metrics = getPickupGridMetrics();
+  const walkable = Array.from({ length: metrics.rows }, () => Array(metrics.columns).fill(false));
+  const reachable = Array.from({ length: metrics.rows }, () => Array(metrics.columns).fill(false));
+
+  for (let row = 0; row < metrics.rows; row += 1) {
+    for (let column = 0; column < metrics.columns; column += 1) {
+      const point = getPickupGridCenter(column, row);
+      walkable[row][column] = isTankPlacementFree(point.x, point.y);
+    }
+  }
+
+  const queue = [];
+  let queueIndex = 0;
+
+  const enqueueCell = (column, row) => {
+    if (!walkable[row]?.[column] || reachable[row][column]) return;
+    reachable[row][column] = true;
+    queue.push({ column, row });
+  };
+
+  const seedFromOrigin = (origin) => {
+    const baseColumn = getPickupGridColumnForX(origin.x, metrics);
+    const baseRow = getPickupGridRowForY(origin.y, metrics);
+
+    for (let ring = 0; ring <= PICKUP_SEARCH_MAX_RINGS; ring += 1) {
+      let seeded = false;
+
+      for (let dColumn = -ring; dColumn <= ring; dColumn += 1) {
+        for (let dRow = -ring; dRow <= ring; dRow += 1) {
+          if (Math.abs(dColumn) !== ring && Math.abs(dRow) !== ring) continue;
+
+          const column = clampPickupGridColumn(baseColumn + dColumn, metrics);
+          const row = clampPickupGridRow(baseRow + dRow, metrics);
+          if (!walkable[row][column]) continue;
+
+          const point = getPickupGridCenter(column, row);
+          if (!canTankTraverseBetween(origin.x, origin.y, point.x, point.y)) continue;
+
+          enqueueCell(column, row);
+          seeded = true;
+        }
+      }
+
+      if (seeded) {
+        return;
+      }
+    }
+  };
+
+  for (const origin of getPickupReachabilityOrigins()) {
+    seedFromOrigin(origin);
+  }
+
+  const neighborOffsets = [
+    { column: 1, row: 0 },
+    { column: -1, row: 0 },
+    { column: 0, row: 1 },
+    { column: 0, row: -1 },
+  ];
+
+  while (queueIndex < queue.length) {
+    const current = queue[queueIndex];
+    queueIndex += 1;
+    const currentPoint = getPickupGridCenter(current.column, current.row);
+
+    for (const offset of neighborOffsets) {
+      const nextColumn = current.column + offset.column;
+      const nextRow = current.row + offset.row;
+      if (
+        nextColumn < 0 ||
+        nextColumn >= metrics.columns ||
+        nextRow < 0 ||
+        nextRow >= metrics.rows ||
+        !walkable[nextRow][nextColumn] ||
+        reachable[nextRow][nextColumn]
+      ) {
+        continue;
+      }
+
+      const nextPoint = getPickupGridCenter(nextColumn, nextRow);
+      if (!canTankTraverseBetween(currentPoint.x, currentPoint.y, nextPoint.x, nextPoint.y)) {
+        continue;
+      }
+
+      enqueueCell(nextColumn, nextRow);
+    }
+  }
+
+  return { metrics, reachable };
+}
+
+function isPickupPointReachable(x, y, reachability) {
+  if (!isTankPlacementFree(x, y)) {
+    return false;
+  }
+
+  const baseColumn = getPickupGridColumnForX(x, reachability.metrics);
+  const baseRow = getPickupGridRowForY(y, reachability.metrics);
+
+  for (let ring = 0; ring <= 2; ring += 1) {
+    for (let dColumn = -ring; dColumn <= ring; dColumn += 1) {
+      for (let dRow = -ring; dRow <= ring; dRow += 1) {
+        if (Math.abs(dColumn) !== ring && Math.abs(dRow) !== ring) continue;
+
+        const column = clampPickupGridColumn(baseColumn + dColumn, reachability.metrics);
+        const row = clampPickupGridRow(baseRow + dRow, reachability.metrics);
+        if (!reachability.reachable[row][column]) continue;
+
+        const point = getPickupGridCenter(column, row);
+        if (canTankTraverseBetween(point.x, point.y, x, y)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function resolvePickupAnchor(anchor, reachability) {
+  if (isPickupPointReachable(anchor.x, anchor.y, reachability)) {
     return { x: anchor.x, y: anchor.y };
   }
 
@@ -309,7 +504,7 @@ function resolvePickupAnchor(anchor) {
 
         const candidateX = anchor.x + dx * PICKUP_SEARCH_STEP;
         const candidateY = anchor.y + dy * PICKUP_SEARCH_STEP;
-        if (!isTankPlacementFree(candidateX, candidateY)) continue;
+        if (!isPickupPointReachable(candidateX, candidateY, reachability)) continue;
 
         const distanceSq = dx * dx + dy * dy;
         if (distanceSq < bestDistanceSq) {
@@ -327,11 +522,11 @@ function resolvePickupAnchor(anchor) {
   return null;
 }
 
-function findFallbackPickupPoint() {
-  for (let y = TANK_RADIUS; y <= WORLD.height - TANK_RADIUS; y += PICKUP_SEARCH_STEP) {
-    for (let x = TANK_RADIUS; x <= WORLD.width - TANK_RADIUS; x += PICKUP_SEARCH_STEP) {
-      if (isTankPlacementFree(x, y)) {
-        return { x, y };
+function findFallbackPickupPoint(reachability) {
+  for (let row = 0; row < reachability.metrics.rows; row += 1) {
+    for (let column = 0; column < reachability.metrics.columns; column += 1) {
+      if (reachability.reachable[row][column]) {
+        return getPickupGridCenter(column, row);
       }
     }
   }
@@ -339,11 +534,12 @@ function findFallbackPickupPoint() {
 }
 
 function collectResolvedPickupPoints() {
+  const reachability = buildPickupReachabilityMap();
   const resolvedPoints = [];
   const seen = new Set();
 
   for (const point of getCurrentPickupPoints()) {
-    const resolved = resolvePickupAnchor(point);
+    const resolved = resolvePickupAnchor(point, reachability);
     if (!resolved) continue;
 
     const key = `${resolved.x}:${resolved.y}`;
@@ -361,7 +557,7 @@ function collectResolvedPickupPoints() {
     return resolvedPoints;
   }
 
-  const fallback = findFallbackPickupPoint();
+  const fallback = findFallbackPickupPoint(reachability);
   if (!fallback) return [];
   return [
     {
