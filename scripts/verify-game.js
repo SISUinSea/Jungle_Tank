@@ -32,11 +32,53 @@ async function main() {
     return window.__gameDebug.getState();
   });
 
+  const starState = await page.evaluate(async () => {
+    const before = window.__gameDebug.getState();
+    window.__gameDebug.forceSpecialItem("star", before.player.x, before.player.y);
+    await window.advanceTime(150);
+    return window.__gameDebug.getState();
+  });
+
+  const mushroomState = await page.evaluate(async () => {
+    const before = window.__gameDebug.getState();
+    window.__gameDebug.forceSpecialItem("mushroom", before.player.x, before.player.y);
+    await window.advanceTime(150);
+    return window.__gameDebug.getState();
+  });
+
+  const shellState = await page.evaluate(async () => {
+    window.__gameDebug.clearHazards();
+    window.__gameDebug.setConfig({ friendlyCount: 1, enemyCount: 1 });
+    window.__gameDebug.startGame();
+    await window.advanceTime(50);
+    window.__gameDebug.setTank("player", {
+      x: 500,
+      y: 500,
+      hp: 100,
+      alive: true,
+      shield: false,
+      rapidFireTimer: 0,
+      starTimer: 0,
+      mushroomTimer: 0,
+    });
+    window.__gameDebug.setTank("bot", {
+      x: 1200,
+      y: 700,
+      hp: 100,
+      alive: true,
+      shield: false,
+    });
+    window.__gameDebug.forceShell(500, 500, 0, 0);
+    await window.advanceTime(150);
+    return window.__gameDebug.getState();
+  });
+
   const scoreState = await page.evaluate(async () => {
     window.__gameDebug.setConfig({ friendlyCount: 1, enemyCount: 1 });
     window.__gameDebug.startGame();
     await window.advanceTime(50);
     window.__gameDebug.clearBullets();
+    window.__gameDebug.clearHazards();
     window.__gameDebug.setTank("player", {
       x: 340,
       y: 450,
@@ -46,6 +88,9 @@ async function main() {
       hp: 100,
       alive: true,
       shield: false,
+      rapidFireTimer: 0,
+      starTimer: 0,
+      mushroomTimer: 0,
       score: 0,
       deaths: 0,
       respawnTimer: 0,
@@ -63,8 +108,8 @@ async function main() {
     });
     window.__gameDebug.setTeamScore("blue", 0);
     window.__gameDebug.setTeamScore("red", 0);
-    window.__gameDebug.fire("player");
-    await window.advanceTime(500);
+    window.__gameDebug.damage("bot", 34, "player");
+    await window.advanceTime(100);
     return window.__gameDebug.getState();
   });
 
@@ -73,6 +118,7 @@ async function main() {
     window.__gameDebug.startGame();
     await window.advanceTime(50);
     window.__gameDebug.clearBullets();
+    window.__gameDebug.clearHazards();
     window.__gameDebug.setTank("player", {
       x: 340,
       y: 450,
@@ -82,6 +128,9 @@ async function main() {
       hp: 100,
       alive: true,
       shield: false,
+      rapidFireTimer: 0,
+      starTimer: 0,
+      mushroomTimer: 0,
       score: 2,
       deaths: 0,
       respawnTimer: 0,
@@ -99,8 +148,8 @@ async function main() {
     });
     window.__gameDebug.setTeamScore("blue", 2);
     window.__gameDebug.setTeamScore("red", 0);
-    window.__gameDebug.fire("player");
-    await window.advanceTime(500);
+    window.__gameDebug.damage("bot", 34, "player");
+    await window.advanceTime(100);
     return window.__gameDebug.getState();
   });
 
@@ -112,7 +161,7 @@ async function main() {
   });
 
   const pickupSpawnState = await page.evaluate(async () => {
-    const tankRadius = 28;
+    const tankRadius = 22;
     const gridStep = 32;
     const probeStep = 16;
     const world = { width: 1600, height: 900 };
@@ -297,6 +346,27 @@ async function main() {
       actual: rapidState.player.rapidFireTimer,
     },
     {
+      name: "star pickup applies",
+      pass: starState.player.starTimer > 0,
+      actual: starState.player.starTimer,
+    },
+    {
+      name: "mushroom pickup enlarges player",
+      pass: mushroomState.player.mushroomTimer > 0 && mushroomState.player.currentRadius > 22,
+      actual: {
+        timer: mushroomState.player.mushroomTimer,
+        radius: mushroomState.player.currentRadius,
+      },
+    },
+    {
+      name: "shell hazard damages the player",
+      pass: shellState.player.hp < 100 && shellState.hazards.length === 1,
+      actual: {
+        hp: shellState.player.hp,
+        hazards: shellState.hazards.length,
+      },
+    },
+    {
       name: "blue team scores after lethal shot",
       pass:
         scoreState.player.score === 1 &&
@@ -339,6 +409,11 @@ async function main() {
       name: "selected map exposes its terrain layout",
       pass: mapState.walls.length === 7,
       actual: mapState.walls.length,
+    },
+    {
+      name: "neutral tank spawns in match",
+      pass: teamState.neutralTank && teamState.neutralTank.hp === 72,
+      actual: teamState.neutralTank,
     },
     {
       name: "pickup spawn points stay on walkable ground for every map",
