@@ -2,7 +2,7 @@
   "name": "topviewattack",
   "version": "1.0.0",
   "private": true,
-  "description": "Top-view tank duel against a bot.",
+  "description": "Top-view tank team battle against bots.",
   "scripts": {
     "start": "node scripts/static-server.js",
     "verify": "node scripts/verify-game.js"
