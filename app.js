@@ -16,6 +16,7 @@ const BULLET_LIFETIME = 1.55;
 const BULLET_DAMAGE = 34;
 const BASE_FIRE_COOLDOWN = 0.42;
 const RAPID_FIRE_COOLDOWN = 0.18;
+const POWERUP_DURATION = 3;
 const RESPAWN_TIME = 2.15;
 const PICKUP_RESPAWN = 7.8;
 
@@ -268,6 +269,108 @@ let pickupIdCounter = 1;
 let lastFrameTime = performance.now();
 let rafId = 0;
 
+const audioState = {
+  unlocked: false,
+  bgm: null,
+  effects: null,
+};
+
+function createAudioInstance(src, volume, loop = false) {
+  const audio = new Audio(src);
+  audio.preload = "auto";
+  audio.volume = volume;
+  audio.loop = loop;
+  return audio;
+}
+
+function createAudioPool(src, volume, size = 5) {
+  return {
+    items: Array.from({ length: size }, () => createAudioInstance(src, volume, false)),
+    cursor: 0,
+  };
+}
+
+function ensureAudioSetup() {
+  if (audioState.bgm) return;
+
+  audioState.bgm = createAudioInstance("./sound/bgm/tank_battle_bgm.wav", 0.35, true);
+  audioState.effects = {
+    playerShot: createAudioPool("./sound/effects/player_shot.wav", 0.48, 6),
+    enemyShot: createAudioPool("./sound/effects/enemy_shot.wav", 0.42, 10),
+    powerShot: createAudioPool("./sound/effects/power_cannon_shot.wav", 0.52, 6),
+    hit: createAudioPool("./sound/effects/tank_hit.wav", 0.44, 8),
+    shieldPickup: createAudioPool("./sound/effects/shield_pickup.wav", 0.5, 3),
+    healPickup: createAudioPool("./sound/effects/heal_pickup.wav", 0.48, 3),
+    powerPickup: createAudioPool("./sound/effects/power_pickup.wav", 0.5, 3),
+  };
+}
+
+function playFromPool(pool) {
+  if (!pool) return;
+  const audio = pool.items[pool.cursor];
+  pool.cursor = (pool.cursor + 1) % pool.items.length;
+  try {
+    audio.currentTime = 0;
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+  } catch (_error) {}
+}
+
+function unlockAudio() {
+  ensureAudioSetup();
+  audioState.unlocked = true;
+  syncBgmToState();
+}
+
+function syncBgmToState() {
+  ensureAudioSetup();
+  if (!audioState.unlocked || !audioState.bgm) return;
+
+  const shouldPlay = state.mode === "playing" || state.mode === "paused" || state.mode === "finished";
+  if (shouldPlay) {
+    audioState.bgm.volume = state.mode === "paused" ? 0.2 : 0.35;
+    const playPromise = audioState.bgm.play();
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch(() => {});
+    }
+  } else {
+    audioState.bgm.pause();
+    audioState.bgm.currentTime = 0;
+  }
+}
+
+function playShotAudio(owner) {
+  if (!audioState.unlocked) return;
+  const boosted = owner.rapidFireTimer > 0;
+  if (boosted) {
+    playFromPool(audioState.effects.powerShot);
+    return;
+  }
+  if (owner.controlled) {
+    playFromPool(audioState.effects.playerShot);
+    return;
+  }
+  playFromPool(audioState.effects.enemyShot);
+}
+
+function playHitAudio() {
+  if (!audioState.unlocked) return;
+  playFromPool(audioState.effects.hit);
+}
+
+function playPickupAudio(type) {
+  if (!audioState.unlocked) return;
+  if (type === "shield") {
+    playFromPool(audioState.effects.shieldPickup);
+  } else if (type === "heal") {
+    playFromPool(audioState.effects.healPickup);
+  } else if (type === "rapid") {
+    playFromPool(audioState.effects.powerPickup);
+  }
+}
+
 function getCurrentMap() {
   return MAPS[state.mapIndex] || MAPS[0];
 }
@@ -299,6 +402,7 @@ function togglePause() {
   } else if (state.mode === "paused") {
     state.mode = "playing";
   }
+  syncBgmToState();
 }
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
@@ -517,6 +621,7 @@ function resetMatch() {
   state.bullets = [];
   state.particles = [];
   state.winnerTeam = null;
+  syncBgmToState();
 }
 
 function restartToMenu() {
@@ -538,6 +643,7 @@ function restartToMenu() {
   state.botBrains = {};
   state.localPlayerId = null;
   state.winnerTeam = null;
+  syncBgmToState();
 }
 
 function startGame() {
@@ -683,6 +789,7 @@ function spawnBullet(owner) {
   });
   owner.fireCooldown = owner.rapidFireTimer > 0 ? RAPID_FIRE_COOLDOWN : BASE_FIRE_COOLDOWN;
   addFlash(owner.x, owner.y, owner.color, 34, 0.16);
+  playShotAudio(owner);
 }
 
 function finishMatch(teamId) {
@@ -691,6 +798,7 @@ function finishMatch(teamId) {
   state.message = `${TEAM_META[teamId].name} wins the battle.`;
   state.messageTimer = 999;
   state.bullets = [];
+  syncBgmToState();
 }
 
 function killTank(victim, attacker) {
@@ -736,11 +844,13 @@ function tryApplyDamage(target, attacker, damage) {
     target.flashTimer = 0.18;
     addFlash(target.x, target.y, "#a5f1ff", 52, 0.22);
     showMessage(`${target.label} shield cracked.`, 0.8);
+    playHitAudio();
     return true;
   }
   target.hp = Math.max(0, target.hp - damage);
   target.flashTimer = 0.16;
   addFlash(target.x, target.y, "#ffffff", 28, 0.12);
+  playHitAudio();
   if (target.hp <= 0) {
     killTank(target, attacker);
   }
@@ -770,14 +880,15 @@ function applyPickup(tank, pickup) {
     showMessage(`${tank.label} repairs armor.`, 1.0);
     addFlash(tank.x, tank.y, "#8cffae", 46, 0.24);
   } else if (pickup.type === "rapid") {
-    tank.rapidFireTimer = 5.8;
-    showMessage(`${tank.label} grabs rapid fire.`, 1.0);
+    tank.rapidFireTimer = POWERUP_DURATION;
+    showMessage(`${tank.label} loads heavy shells.`, 1.0);
     addFlash(tank.x, tank.y, "#ffd166", 48, 0.24);
   } else if (pickup.type === "shield") {
     tank.shield = true;
     showMessage(`${tank.label} activates a shield.`, 1.0);
     addFlash(tank.x, tank.y, "#7ef2ff", 48, 0.24);
   }
+  playPickupAudio(pickup.type);
   state.pickup = null;
   state.pickupTimer = PICKUP_RESPAWN;
 }
@@ -1125,6 +1236,7 @@ function updateMousePosition(event) {
 }
 
 function handleButtonPress(id) {
+  unlockAudio();
   if (id === "start" || id === "restart") {
     startGame();
     return;
@@ -1503,7 +1615,7 @@ function drawHud() {
   const powerups = player
     ? [
         player.shield ? "Shield" : null,
-        player.rapidFireTimer > 0 ? `Rapid ${player.rapidFireTimer.toFixed(1)}s` : null,
+        player.rapidFireTimer > 0 ? `Heavy Shell ${player.rapidFireTimer.toFixed(1)}s` : null,
         player.alive ? `HP ${Math.round(player.hp)} / ${MAX_HP}` : `Respawn ${player.respawnTimer.toFixed(1)}s`,
       ]
         .filter(Boolean)
@@ -1682,6 +1794,7 @@ function frame(now) {
 }
 
 function handleKey(event, isDown) {
+  if (isDown) unlockAudio();
   const key = event.key.toLowerCase();
   if (
     key === "w" ||
@@ -1741,6 +1854,7 @@ canvas.addEventListener("mousemove", (event) => {
 });
 
 canvas.addEventListener("mousedown", (event) => {
+  unlockAudio();
   updateMousePosition(event);
   const point = screenToCanvas(event.clientX, event.clientY);
   const button = pickButtonAt(point.x, point.y);
